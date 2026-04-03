@@ -1,0 +1,290 @@
+DÉBUT DU FICHIER TXT
+
+AtlasIP — Spécification Fonctionnelle & Technique
+Version : 1.0
+Auteur : Kévin Blondel
+Objectif : Refonte moderne d’IPNetInfo (NirSoft)
+Backend : Rust
+UI : Web moderne ou Tauri
+Extension navigateur : Oui
+Multilingue : Oui
+
+Vision & Objectifs
+
+AtlasIP est un outil d’analyse d’adresses IP inspiré d’IPNetInfo, mais modernisé :
+
+Backend Rust performant, modulaire, sécurisé
+
+Interface moderne (web ou desktop Tauri)
+
+API locale HTTP pour intégration et extension navigateur
+
+Multilingue (fichiers JSON)
+
+Exports modernes (CSV, HTML, XML, TXT)
+
+Résolution DNS, WHOIS, RDAP
+
+Multi‑lookup
+
+Cross‑platform (macOS, Linux, Windows)
+
+AtlasIP doit être open‑source, simple, rapide, fiable, et sans dépendances cloud.
+
+Fonctionnalités Fonctionnelles
+
+2.1 Entrée & Analyse
+
+Entrées possibles :
+
+Adresse IP (IPv4/IPv6)
+
+Hostname
+
+Liste multi‑ligne d’IP/hostnames
+
+Traitements :
+
+Nettoyage automatique (espaces, doublons)
+
+Résolution DNS (hostname → IP, IP → PTR)
+
+Lookup RDAP (prioritaire)
+
+Fallback WHOIS brut si RDAP indisponible
+
+Parsing des données pour extraire les champs utiles
+
+Champs extraits :
+Country, Owner Name, Address, Email(s), Abuse Email(s), Phone, Fax, From IP, To IP, Status, Whois Source, Network Name, Contact Name, Allocated, Host Name, Resolved Name, CIDR, Postal Code, Abuse Contact, Raw WHOIS, Raw RDAP JSON.
+
+2.2 Interface Utilisateur (UI)
+
+Vue principale :
+
+Champ multi‑ligne pour IP/hostnames
+
+Bouton “Analyser”
+
+Tableau dynamique avec colonnes :
+Order, IP Address, Country, Owner Name, Address, Email, Abuse Email, Phone, Fax, From IP, To IP, Status, Whois Source, Network Name, Contact Name, Allocated, Host Name, Resolved Name, CIDR, Postal Code, Abuse Contact.
+
+Fonctionnalités UI :
+
+Tri par colonne
+
+Masquage/affichage des colonnes
+
+Redimensionnement des colonnes
+
+Recherche globale
+
+Détails d’une IP (modal ou panneau latéral) : WHOIS brut, RDAP brut, résumé structuré
+
+Actions contextuelles :
+
+Copier IP
+
+Ouvrir dans Google Maps
+
+Ouvrir RDAP dans navigateur
+
+Copier WHOIS brut
+
+2.3 Exports
+
+Formats supportés :
+CSV, TSV, TXT, HTML (vertical/horizontal), XML, WHOIS brut.
+
+Options :
+
+Inclure entête CSV
+
+Format HTML par défaut configurable
+
+2.4 Paramètres
+
+Proxy : None / SOCKS4 / SOCKS5 (host, port, user, password)
+
+Timeouts : DNS, WHOIS, RDAP
+
+Langue (fr/en/…)
+
+Format d’export par défaut
+
+Auto‑size columns
+
+2.5 Mode CLI
+
+Exemples :
+atlasip lookup 8.8.8.8
+atlasip lookup --file ips.txt --format csv --output result.csv
+atlasip lookup example.com --rdap-only
+
+Options :
+--format table|json|csv
+--output file
+--rdap-only
+--whois-only
+--no-dns
+
+2.6 API Locale HTTP
+
+Serveur local : 127.0.0.1:8080
+
+Endpoints :
+
+GET /health
+→ { "status": "ok" }
+
+GET /lookup/ip/{ip}
+→ Retourne un IpRecord structuré
+
+GET /lookup/hostname/{hostname}
+→ Résout puis analyse
+
+POST /lookup/bulk
+Body : { "targets": ["8.8.8.8", "example.com"] }
+
+GET /export
+Query : format=csv|tsv|txt|html|xml, ids=...
+
+GET /config
+→ Retourne la configuration
+
+POST /config
+→ Met à jour la configuration
+
+2.7 Extension Navigateur
+
+Popup affichant les infos de l’IP du site courant
+
+Appel à l’API locale /lookup/ip/{ip}
+
+Menu contextuel “Analyser avec AtlasIP”
+
+Localisation via _locales/fr/messages.json, _locales/en/messages.json
+
+Modèle de Données
+
+Structure Rust IpRecord :
+
+id (UUID)
+order (u32)
+ip (String)
+country (Option<String>)
+owner_name (Option<String>)
+address (Option<String>)
+emails (Vec<String>)
+abuse_emails (Vec<String>)
+phone (Option<String>)
+fax (Option<String>)
+from_ip (Option<String>)
+to_ip (Option<String>)
+status (Option<String>)
+whois_source (Option<String>)
+network_name (Option<String>)
+contact_name (Option<String>)
+allocated (Option<String>)
+host_name (Option<String>)
+resolved_name (Option<String>)
+cidr (Option<String>)
+postal_code (Option<String>)
+abuse_contact (Option<String>)
+raw_whois (Option<String>)
+raw_rdap (Option<serde_json::Value>)
+lookup_errors (Vec<String>)
+
+Architecture Backend Rust
+
+Arborescence :
+
+src/
+main.rs
+http.rs
+cli.rs
+dns.rs
+whois/
+mod.rs
+client.rs
+rdap/
+mod.rs
+client.rs
+export.rs
+config.rs
+i18n.rs
+models.rs
+utils.rs
+
+Modules :
+
+main.rs → point d’entrée, CLI ou serveur HTTP
+cli.rs → commandes CLI
+http.rs → API locale HTTP
+dns.rs → résolution DNS + reverse DNS
+whois/ → client WHOIS brut + parsing
+rdap/ → client RDAP + parsing JSON
+export.rs → CSV, TSV, TXT, HTML, XML, WHOIS brut
+config.rs → gestion config.toml
+i18n.rs → chargement locales/{lang}.json
+models.rs → IpRecord + DTO
+utils.rs → helpers
+
+Internationalisation (i18n)
+
+Structure :
+
+locales/
+en.json
+fr.json
+
+Exemple fr.json :
+app.title = AtlasIP
+action.lookup = Analyser
+action.export = Exporter
+label.ip = Adresse IP
+label.country = Pays
+error.invalid_ip = Adresse IP invalide
+
+Exports
+
+Formats :
+CSV, TSV, TXT, HTML vertical, HTML horizontal, XML, WHOIS brut.
+
+Configuration
+
+Fichier config.toml :
+
+language = "fr"
+proxy_type = "none"
+proxy_host = ""
+proxy_port = 0
+dns_timeout_ms = 3000
+whois_timeout_ms = 5000
+rdap_timeout_ms = 5000
+default_export_format = "csv"
+csv_with_header = true
+
+Contraintes Non Fonctionnelles
+
+Performances : async (Tokio), parallélisme
+
+Sécurité : pas de tracking, pas de cloud
+
+Portabilité : macOS, Linux, Windows
+
+Tests unitaires & intégration
+
+Code Rust idiomatique, modulaire, documenté
+
+Roadmap
+
+Sprint 1 — Backend minimal
+Sprint 2 — Exports + Bulk
+Sprint 3 — UI moderne
+Sprint 4 — Extension navigateur
+Sprint 5 — i18n complet
+
+Licence
+
+Open‑source (Apache‑2.0 recommandé)
