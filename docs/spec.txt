@@ -1,288 +1,357 @@
-AtlasIP — Outil d’OSINT IP moderne, inspiré d’IPNetInfo (NirSoft)
-
-Version : 0.2
-Auteur : Kévin
-Objectif : Moderniser IPNetInfo en conservant ses fonctionnalités clés, tout en ajoutant un backend moderne (DNS + RDAP + WHOIS), une API locale, des exports avancés et une intégration future avec une UI (Tauri) et une extension navigateur.
+📘 AtlasIP — Spécification complète (v0.3)
+Outil d’OSINT IP moderne, inspiré d’IPNetInfo (NirSoft)  
+Auteur : Kévin  
+Objectif : Moderniser IPNetInfo en conservant ses fonctionnalités clés, tout en ajoutant un backend Rust moderne (DNS + RDAP + WHOIS), une API locale, des exports avancés, une configuration persistante, une internationalisation, une UI Tauri et une extension navigateur.
 
 --------------------------------------------------
 1. Objectifs fonctionnels
 --------------------------------------------------
-
 1.1. But principal
-
 AtlasIP est un outil d’OSINT focalisé sur les adresses IP publiques, destiné à :
-- Identifier le propriétaire d’une IP (organisation, netname, range).
-- Récupérer les informations de contact (adresse, téléphone, fax, email, abuse).
-- Identifier le pays / région / registre.
-- Aider à l’analyse d’emails (origine d’un spam, d’un phishing, etc.).
-- Fournir une API locale pour une UI moderne et une extension navigateur.
+
+Identifier le propriétaire d’une IP (organisation, netname, range).
+
+Récupérer les informations de contact (adresse, téléphone, fax, email, abuse).
+
+Identifier le pays / région / registre.
+
+Aider à l’analyse d’emails (origine d’un spam, d’un phishing, etc.).
+
+Fournir une API locale pour une UI moderne et une extension navigateur.
+
+Offrir une alternative moderne, open-source et multiplateforme à IPNetInfo.
 
 1.2. Héritage IPNetInfo (NirSoft)
-
 AtlasIP doit reprendre les comportements clés d’IPNetInfo :
-- Ignorer les IP non publiques (privées, loopback, link-local, multicast, documentation, etc.).
-- Extraire des IP à partir de headers d’emails (mode futur / optionnel côté front).
-- Interroger d’abord ARIN, puis les autres RIR (RIPE, APNIC, LACNIC, AFRINIC) si nécessaire.
-- Analyser le WHOIS brut et présenter les données dans un tableau structuré.
-- Exporter les résultats (CSV, tab-delimited, etc.).
-- Supporter les proxys (SOCKS4/5) pour les requêtes réseau.
-- Gérer les erreurs réseau et les limitations de rate-limit (WHOIS).
+
+Ignorer les IP non publiques (privées, loopback, link-local, multicast, documentation…).
+
+Extraire des IP à partir de headers d’emails (implémentation front).
+
+Interroger d’abord ARIN, puis les autres RIR (RIPE, APNIC, LACNIC, AFRINIC).
+
+Analyser le WHOIS brut et présenter les données dans un tableau structuré.
+
+Exporter les résultats (CSV, tab-delimited, WHOIS brut).
+
+Supporter les proxys (SOCKS4/5).
+
+Gérer les erreurs réseau et les limitations de rate-limit.
+
+Fournir une CLI permettant d’automatiser les requêtes.
 
 1.3. Modernisation par rapport à IPNetInfo
-
 AtlasIP ajoute :
-- Un backend Rust moderne (Tokio, Axum, reqwest, hickory-resolver).
-- Un pipeline DNS + RDAP + WHOIS (RDAP prioritaire, WHOIS en fallback).
-- Une API HTTP locale pour intégration UI / extension navigateur.
-- Des exports multiples (CSV, TSV, TXT, HTML, XML, WHOIS brut).
-- Une configuration persistante (config.toml).
-- Une internationalisation (locales JSON).
-- Des tests unitaires et d’intégration.
+
+Un backend Rust moderne (Tokio, Axum, reqwest, hickory-resolver).
+
+Un pipeline DNS + RDAP + WHOIS (RDAP prioritaire, WHOIS fallback).
+
+Une API HTTP locale pour intégration UI / extension navigateur.
+
+Des exports multiples (CSV, TSV, TXT, HTML, XML, WHOIS brut).
+
+Une configuration persistante (config.toml).
+
+Une internationalisation (locales JSON).
+
+Une CLI moderne.
+
+Une UI Tauri (futur).
+
+Une extension navigateur (futur).
+
+Un support complet des proxys : SOCKS4, SOCKS5, HTTP, HTTPS.
 
 --------------------------------------------------
 2. Comportement réseau et pipeline
 --------------------------------------------------
-
-2.1. Filtrage des IP non publiques (héritage IPNetInfo)
-
-AtlasIP ne doit traiter que des IP publiques.
+2.1. Filtrage des IP non publiques
+AtlasIP ne traite que des IP publiques.
 
 Les IP suivantes doivent être ignorées / rejetées :
 
-- Privées (RFC 1918) :
-  - 10.0.0.0 – 10.255.255.255
-  - 172.16.0.0 – 172.31.255.255
-  - 192.168.0.0 – 192.168.255.255
+IPv4
+Privées (RFC 1918)
 
-- Loopback :
-  - 127.0.0.0 – 127.255.255.255
+Loopback
 
-- Link-local (APIPA) :
-  - 169.254.0.0 – 169.254.255.255
+Link-local (APIPA)
 
-- Multicast :
-  - 224.0.0.0 – 239.255.255.255
+Multicast
 
-- Documentation / réservées :
-  - 192.0.2.0/24
-  - 198.51.100.0/24
-  - 203.0.113.0/24
-  - 240.0.0.0/4
-  - 255.255.255.255
+Documentation / réservées
 
-Comportement :
-- En mode API (lookup IP / hostname) : retourner une erreur 422 “Private or reserved IP not allowed”.
-- En mode bulk : ces IP sont silencieusement filtrées par `clean_targets()` (elles ne sont pas envoyées au pipeline).
-- En interne : le pipeline DNS/RDAP/WHOIS ne doit jamais être appelé pour ces IP.
+Future use (240/4)
 
-2.2. Pipeline de résolution (public IP uniquement)
+IPv6
+Loopback
 
-Pour une IP publique ou un hostname résolu vers une IP publique :
+Unique Local (fc00::/7)
 
-Étapes :
+Link-local (fe80::/10)
 
-1. DNS forward (si hostname)
-   - `dns::resolve_hostname()` pour obtenir une IP (A/AAAA).
-   - Si la résolution donne une IP non publique → 422 (hostname résout vers IP privée).
+Multicast (ff00::/8)
 
-2. PTR lookup (reverse DNS)
-   - `dns::reverse_lookup()` pour obtenir un nom résolu.
-   - Échec non fatal (NXDOMAIN → simplement pas de nom).
+Comportement
+API lookup → 422 “Private or reserved IP not allowed”.
 
-3. RDAP (prioritaire)
-   - Utiliser `rdap::client::query()` pour récupérer les données structurées.
-   - Remplir les champs : owner, country, range, status, abuse, etc.
-   - `whois_source = "RDAP"`.
+Bulk → filtrage silencieux.
 
-4. WHOIS fallback
-   - Si RDAP échoue ou est indisponible, utiliser `whois::client::query()`.
-   - Interroger d’abord ARIN, puis suivre les referrals vers RIPE/APNIC/LACNIC/AFRINIC.
-   - Parser les formats ARIN-style et RIPE-style.
-   - `whois_source = <serveur WHOIS>`.
+Pipeline → jamais appelé pour ces IP.
+
+2.2. Pipeline de résolution (IP publique uniquement)
+Étape 1 — DNS forward (si hostname)
+Résolution A/AAAA.
+
+Si IP non publique → 422.
+
+Étape 2 — PTR lookup (reverse DNS)
+Non bloquant.
+
+Étape 3 — RDAP (prioritaire)
+Récupération des données structurées.
+
+Extraction : owner, org, country, range, CIDR, abuse, contacts, etc.
+
+Étape 4 — WHOIS fallback
+ARIN → referrals → RIR final.
+
+Parsing ARIN-style et RIPE-style.
+
+Extraction des champs utiles.
+
+Détection des erreurs (“rate limit exceeded”, “access denied”).
 
 2.3. Proxys et timeouts
+AtlasIP supporte 4 types de proxys :
 
-- Toutes les requêtes HTTP (RDAP, bootstrap IANA) passent par `reqwest::Client` avec :
-  - Timeout global configurable.
-  - Support optionnel des proxys SOCKS4/SOCKS5 (sans auth dans un premier temps).
+Type	Support	Notes
+SOCKS4	✔️	WHOIS + RDAP
+SOCKS5	✔️	WHOIS + RDAP
+HTTP proxy	✔️	RDAP uniquement
+HTTPS proxy	✔️	RDAP uniquement
+Configuration TOML
+toml
+[proxy]
+http = "http://127.0.0.1:8080"
+https = "https://127.0.0.1:8443"
+socks4 = "socks4://127.0.0.1:1080"
+socks5 = "socks5://127.0.0.1:1080"
+Priorité des proxys
+socks5
 
-- Toutes les requêtes WHOIS passent par `tokio::net::TcpStream` avec :
-  - Timeout via `tokio::time::timeout`.
-  - Gestion des erreurs réseau propre (pas de panic, pas de unwrap).
+socks4
+
+https
+
+http
+
+Timeouts
+Configurable via default_timeout_ms.
 
 2.4. Gestion des erreurs et rate-limit
+WHOIS “rate limit exceeded” → statut failed.
 
-- Si un serveur WHOIS renvoie “Query rate limit exceeded” :
-  - Marquer la requête comme échouée proprement.
-  - Ne pas réessayer en boucle.
-- Si ARIN est indisponible :
-  - Tenter les autres RIR si possible.
-  - Sinon, retourner une erreur claire.
+WHOIS “access denied” → statut failed.
+
+RDAP indisponible → fallback WHOIS.
+
+Aucun panic, aucun unwrap.
 
 --------------------------------------------------
 3. Modèle de données
 --------------------------------------------------
-
 3.1. IpRecord
+Champs :
 
-Structure centrale représentant une ligne de résultat.
+id
 
-Champs (inspirés d’IPNetInfo + enrichis) :
+ip
 
-- id : UUID
-- ip : String
-- hostname : Option<String>
-- resolved_name : Option<String>
-- is_private : bool (true si IP non publique, mais normalement filtrée en amont)
-- country : Option<String>
-- state : Option<String>
-- city : Option<String>
-- owner_name : Option<String>
-- org_name : Option<String>
-- netname : Option<String>
-- cidr : Option<String>
-- range_start : Option<String>
-- range_end : Option<String>
-- abuse_emails : Vec<String>
-- contact_emails : Vec<String>
-- phone : Option<String>
-- fax : Option<String>
-- address : Option<String>
-- created_at : Option<String>
-- updated_at : Option<String>
-- whois_source : Option<String>   // "RDAP", "whois.arin.net", etc.
-- raw_whois : Option<String>
+hostname
+
+resolved_name
+
+country
+
+state
+
+city
+
+owner_name
+
+org_name
+
+netname
+
+cidr
+
+range_start
+
+range_end
+
+abuse_emails
+
+contact_emails
+
+phone
+
+fax
+
+address
+
+created_at
+
+updated_at
+
+whois_source
+
+raw_whois
 
 3.2. COLUMNS et to_row()
+COLUMNS = liste ordonnée des colonnes.
 
-- `COLUMNS: &[&str]` — liste ordonnée des 21 colonnes (héritage IPNetInfo + spec AtlasIP).
-- `IpRecord::to_row()` — retourne `Vec<String>` dans l’ordre de `COLUMNS`.
-  - Les champs multi-valeurs (emails) sont joints avec `"; "`.
-  - Les champs optionnels vides → chaîne vide.
+to_row() = conversion en Vec<String> dans cet ordre.
+
+Emails → "; "
+
+Option<T> vide → ""
 
 --------------------------------------------------
 4. API HTTP locale (Axum)
 --------------------------------------------------
+Endpoints :
 
-4.1. AppState
+GET /health
 
-- `config: Arc<RwLock<AppConfig>>`
-- `records: Arc<RwLock<Vec<IpRecord>>>`
+GET /lookup/ip/:ip
 
-4.2. Endpoints
+GET /lookup/hostname/:host
 
-- `GET /health`
-  - Retourne `{ "status": "ok" }`.
+POST /lookup/bulk
 
-- `GET /lookup/ip/:ip`
-  - Valide l’IP.
-  - Si IP non publique → 422.
-  - Lance le pipeline (DNS PTR + RDAP + WHOIS fallback).
-  - Stocke le résultat dans `records`.
-  - Retourne `IpRecord` en JSON.
+GET /export?format=...
 
-- `GET /lookup/hostname/:host`
-  - Résout le hostname en IP.
-  - Si IP non publique → 422.
-  - Pipeline identique à `/lookup/ip`.
+GET /config
 
-- `POST /lookup/bulk`
-  - Corps : liste de cibles (IP/hostnames).
-  - `clean_targets()` :
-    - normalise
-    - déduplique
-    - filtre les IP non publiques
-  - Exécute les lookups en parallèle (JoinSet).
-  - Stocke les résultats dans `records`.
-  - Retourne la liste des `IpRecord`.
+POST /config
 
-- `GET /export`
-  - Query params : `format`, `ids` (optionnel).
-  - Filtre `records` par IDs si fournis.
-  - Délègue à `export::export(records, format)`.
-  - Retourne le bon `Content-Type`.
-
-- `GET /config`
-  - Retourne la config courante en JSON.
-
-- `POST /config`
-  - Merge partiel des champs.
-  - TODO : persistance sur disque.
-
-4.3. CORS
-
-- CORS permissif pour permettre à une extension navigateur (Chrome/Firefox) d’appeler l’API locale.
+CORS permissif pour extension navigateur.
 
 --------------------------------------------------
 5. Exports
 --------------------------------------------------
+Formats supportés :
 
-5.1. Formats supportés
+CSV
 
-- CSV (séparateur `,`, header optionnel).
-- TSV (tab-delimited).
-- TXT (vertical, type “fiche”).
-- TXT (horizontal, type “table”).
-- HTML (table).
-- HTML (fiche détaillée).
-- XML.
-- WHOIS brut (concaténation des `raw_whois`).
+TSV
 
-Tous les formats s’appuient sur :
-- `COLUMNS`
-- `IpRecord::to_row()`
+TXT (vertical)
 
-5.2. Options héritées d’IPNetInfo
+TXT (horizontal)
 
-- Ajout d’une ligne d’en-tête (activé par défaut).
-- Export CSV/Tab depuis la sélection (côté front futur).
-- Possibilité d’ouvrir l’adresse dans Google Maps (côté UI, pas backend).
+HTML (table)
+
+HTML (fiche)
+
+XML
+
+WHOIS brut
+
+Header activé par défaut (héritage IPNetInfo).
 
 --------------------------------------------------
 6. Configuration
 --------------------------------------------------
-
 6.1. Fichier config.toml
+toml
+listen_addr = "127.0.0.1:8080"
+default_timeout_ms = 5000
+ignore_private_ips = true
+max_concurrent_lookups = 32
+auto_retry_failed = false
+pause_every = 0
+pause_duration_ms = 0
+whois_server_override = ""
 
-Champs possibles :
+[proxy]
+http = ""
+https = ""
+socks4 = ""
+socks5 = ""
+6.2. Fonctions
+AppConfig::load()
 
-- `listen_addr` : "127.0.0.1:8080"
-- `default_timeout_ms` : u64
-- `proxy_socks4` : Option<String>
-- `proxy_socks5` : Option<String>
-- `ignore_private_ips` : bool (par défaut true, pour rester fidèle à IPNetInfo)
-- `max_concurrent_lookups` : u32
+AppConfig::save()
 
-6.2. Chargement / sauvegarde
-
-- `AppConfig::load(path)` — charge depuis TOML.
-- `AppConfig::save(path)` — sauvegarde.
+AppConfig::default_path()
 
 --------------------------------------------------
 7. Internationalisation
 --------------------------------------------------
+Fichiers JSON : locales/en.json, locales/fr.json.
 
-- Fichiers `locales/en.json`, `locales/fr.json`.
-- `i18n::t(key: &str) -> String`.
-- Utilisé pour les messages d’erreur, labels, etc.
+Fallback automatique.
+
+Utilisé pour messages d’erreur, CLI, UI.
 
 --------------------------------------------------
-8. Extension navigateur (futur)
+8. CLI
 --------------------------------------------------
+Commandes :
 
-- Extension Chrome/Firefox qui :
-  - Récupère l’IP du site courant.
-  - Appelle `GET /lookup/ip/:ip` sur `127.0.0.1:8080`.
-  - Affiche les infos (owner, country, abuse, etc.).
-- Nécessite que AtlasIP tourne en tâche de fond (mode service possible).
+atlasip lookup <ip|host>
+
+atlasip serve
+
+atlasip export --format csv
+
+atlasip --config <path>
+
+Options héritées d’IPNetInfo (modernisées) :
+
+--retry-failed
+
+--no-ipv6
+
+--whois-server <server>
+
+--pause-every <n>
+
+--pause-duration <ms>
 
 --------------------------------------------------
 9. UI Tauri (futur)
 --------------------------------------------------
+Fonctionnalités :
 
-- UI desktop moderne (Rust + Tauri + Svelte/React).
-- Table des résultats.
-- Détails par IP.
-- Exports.
-- Config.
-- Intégration “Open in Google Maps” (héritage IPNetInfo).
+Table des résultats
+
+Détails par IP
+
+Exports
+
+Config
+
+Extraction depuis email headers
+
+Extraction depuis URL
+
+Open in Google Maps
+
+Mode sombre
+
+Charte graphique française (Marianne)
+
+--------------------------------------------------
+10. Extension navigateur (futur)
+--------------------------------------------------
+Récupère l’IP du site courant
+
+Appelle l’API locale
+
+Affiche owner / country / abuse
+
+Icône Atlas·IP

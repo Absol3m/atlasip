@@ -618,6 +618,7 @@ mod tests {
     // --- Integration tests (real network) ---
 
     #[tokio::test]
+    #[ignore = "requires ARIN RDAP network access"]
     async fn test_query_google_dns_ip() {
         let client = RdapClient::new(5000).unwrap();
         let result = client.query("8.8.8.8").await.unwrap();
@@ -644,6 +645,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires ARIN RDAP network access"]
     async fn test_query_ipv6() {
         let client = RdapClient::new(5000).unwrap();
         // Google's public IPv6 DNS — also served by ARIN (no top-level country).
