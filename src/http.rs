@@ -447,7 +447,8 @@ fn export_content_type(fmt: ExportFormat) -> &'static str {
     match fmt {
         ExportFormat::Csv                          => "text/csv; charset=utf-8",
         ExportFormat::Tsv                          => "text/tab-separated-values; charset=utf-8",
-        ExportFormat::Txt                          => "text/plain; charset=utf-8",
+        ExportFormat::Txt
+        | ExportFormat::TxtHorizontal              => "text/plain; charset=utf-8",
         ExportFormat::HtmlVertical
         | ExportFormat::HtmlHorizontal             => "text/html; charset=utf-8",
         ExportFormat::Xml                          => "application/xml; charset=utf-8",
