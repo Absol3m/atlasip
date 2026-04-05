@@ -1,9 +1,17 @@
+[workspace]
+members  = [".", "ui/src-tauri"]
+resolver = "2"
+
 [package]
-name = "atlasip"
-version = "0.1.0"
-edition = "2024"
+name        = "atlasip"
+version     = "0.1.0"
+edition     = "2024"
 description = "Modern IP analysis tool — backend for AtlasIP"
-license = "Apache-2.0"
+license     = "Apache-2.0"
+
+[lib]
+name = "atlasip"
+path = "src/lib.rs"
 
 [[bin]]
 name = "atlasip"
