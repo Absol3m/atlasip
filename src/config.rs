@@ -76,9 +76,26 @@ pub struct AppConfig {
     pub default_timeout_ms: u64,
 
     // ── Per-pipeline timeouts (kept for http.rs / cli.rs compatibility) ───
+    /// DNS resolution timeout (spec perf §4: 2 s).
     pub dns_timeout_ms: u64,
+    /// WHOIS query timeout (spec perf §4: 3 s).
     pub whois_timeout_ms: u64,
+    /// RDAP query timeout (spec perf §4: 3 s).
     pub rdap_timeout_ms: u64,
+
+    // ── Global hard-cap timeout (P0-PERF-001) ─────────────────────────────
+    /// Hard deadline for the entire per-IP pipeline.
+    /// If RDAP + WHOIS + DNS do not finish within this many milliseconds,
+    /// the lookup is cancelled and an error is recorded.  Spec perf §4: 5 s.
+    #[serde(default = "default_global_timeout_ms")]
+    pub global_timeout_ms: u64,
+
+    // ── Cache (P0-PERF-004, P3-PERF-018) ──────────────────────────────────
+    /// Time-to-live for cached lookup results, in seconds.
+    /// After this period the entry is treated as expired and re-fetched.
+    /// Default: 3600 s (1 hour).
+    #[serde(default = "default_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
 
     // ── Lookup behaviour ───────────────────────────────────────────────────
     /// Silently skip private / reserved IP addresses.
@@ -114,14 +131,20 @@ pub struct AppConfig {
     pub proxy: ProxyConfig,
 }
 
+fn default_global_timeout_ms() -> u64 { 5_000 }
+fn default_cache_ttl_secs()    -> u64 { 3_600 }
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             listen_addr: "127.0.0.1:8080".to_string(),
             default_timeout_ms: 5000,
-            dns_timeout_ms: 3000,
-            whois_timeout_ms: 5000,
-            rdap_timeout_ms: 5000,
+            // Spec perf §4 target values.
+            dns_timeout_ms:    2_000,
+            whois_timeout_ms:  3_000,
+            rdap_timeout_ms:   3_000,
+            global_timeout_ms: 5_000,
+            cache_ttl_secs:    3_600,
             ignore_private_ips: true,
             max_concurrent_lookups: 32,
             auto_retry_failed: false,
@@ -260,6 +283,11 @@ mod tests {
         let cfg = AppConfig::default();
         assert_eq!(cfg.listen_addr, "127.0.0.1:8080");
         assert_eq!(cfg.default_timeout_ms, 5000);
+        assert_eq!(cfg.dns_timeout_ms,    2_000);
+        assert_eq!(cfg.whois_timeout_ms,  3_000);
+        assert_eq!(cfg.rdap_timeout_ms,   3_000);
+        assert_eq!(cfg.global_timeout_ms, 5_000);
+        assert_eq!(cfg.cache_ttl_secs,    3_600);
         assert!(cfg.ignore_private_ips);
         assert_eq!(cfg.max_concurrent_lookups, 32);
         assert!(!cfg.auto_retry_failed);

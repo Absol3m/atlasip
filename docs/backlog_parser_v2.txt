@@ -1,0 +1,226 @@
+1. Introduction
+Ce document définit le backlog complet pour la réécriture du parser d’AtlasIP.
+Il sert de référence unique pour :
+
+les développeurs
+
+les tests unitaires
+
+la QA
+
+les prompts Claude Code
+
+la roadmap des sprints
+
+Le parser actuel présente des incohérences majeures.
+Ce document définit la spec complète, les bugs, les règles, les cas limites, et les tâches à réaliser.
+
+2. Objectifs du Parser v2
+Le parser doit :
+
+être strict
+
+être cohérent
+
+être prévisible
+
+être testable
+
+être OSINT‑friendly
+
+gérer les cas mixtes
+
+bloquer les erreurs
+
+fournir un feedback clair
+
+fonctionner avec du texte libre
+
+extraire IPs, hostnames, URLs, headers
+
+3. Types d’entrées supportées
+3.1 IPv4
+Format strict
+
+4 octets
+
+Chaque octet ∈ [0, 255]
+
+3.2 IPv6
+Format standard
+
+Utiliser std::net::Ipv6Addr::from_str
+
+3.3 Hostname
+Regex stricte
+
+Pas de double point
+
+Pas de caractères interdits
+
+3.4 URL
+Parser via url::Url
+
+Extraire hostname
+
+Extraire port (optionnel)
+
+Extraire protocole (optionnel)
+
+3.5 Texte libre
+Extraction d’IP
+
+Extraction de hostname
+
+Extraction d’URL
+
+Extraction de headers email
+
+Ignorer les mots normaux
+
+4. Types d’entrées à rejeter
+IPv4 invalide
+
+IPv4 hors plage
+
+IPv6 invalide
+
+Hostname invalide
+
+URL invalide
+
+Mot normal traité comme IP
+
+Entrée vide
+
+Entrée tronquée
+
+5. Règles de validation globale
+5.1 Une seule entrée invalide → tout bloque
+bouton Analyze = gris
+
+badge = rouge
+
+message d’erreur global
+
+aucune analyse possible
+
+5.2 Toutes les entrées valides → OK
+bouton Analyze = bleu
+
+badge = mode correct
+
+compteur cohérent
+
+6. Détection du mode
+Cas	Mode
+IPv4 only	IPv4 DETECTED
+IPv6 only	IPv6 DETECTED
+Hostname only	HOSTNAME DETECTED
+Mix IP + hostname	MIXED MODE
+Mix IP + URL	MIXED MODE
+Mix hostname + URL	MIXED MODE
+Mix IPv4 + IPv6	MIXED MODE
+Erreur	INVALID
+7. Extraction depuis texte libre
+7.1 Extraction d’IP
+IPv4
+
+IPv6
+
+7.2 Extraction de hostname
+google.fr
+
+sub.domain.co.uk
+
+7.3 Extraction depuis URL
+protocole
+
+hostname
+
+port
+
+path ignoré
+
+7.4 Extraction depuis email headers
+Received: from X (IP)
+
+X-Originating-IP
+
+etc.
+
+7.5 Ignorer
+mots normaux
+
+ponctuation
+
+séparateurs
+
+8. Bugs identifiés (à corriger)
+8.1 Mixed Mode non implémenté
+8.2 Hostnames ignorés en présence d’IPs
+8.3 URLs non parsées
+8.4 IP invalides non bloquantes
+8.5 Mots normaux traités comme IP invalides
+8.6 Badge incorrect
+8.7 Message d’erreur global manquant
+8.8 Compteur incorrect
+8.9 Parsing non strict
+8.10 Tronquage silencieux
+8.11 Extraction hostname depuis URL manquante
+8.12 Feedback utilisateur incohérent
+9. Tâches du Sprint 2.2.1 — Parsing v2
+9.1 Implémenter la spec complète
+9.2 Implémenter la validation globale
+9.3 Implémenter la détection du mode
+9.4 Implémenter le compteur cohérent
+9.5 Implémenter les messages d’erreur
+9.6 Implémenter les tests unitaires (50+)
+9.7 Implémenter les cas limites
+9.8 Implémenter les cas mixtes
+10. Tâches du Sprint 2.2.2 — Extraction v2
+10.1 Extraction multi‑lignes
+10.2 Extraction multi‑formats
+10.3 Extraction depuis headers
+10.4 Extraction depuis logs
+10.5 Extraction depuis URLs
+10.6 Extraction depuis texte bruité
+11. Notes pour les tests unitaires
+tests IPv4
+
+tests IPv6
+
+tests hostname
+
+tests URL
+
+tests mixtes
+
+tests invalides
+
+tests limites
+
+tests texte libre
+
+tests headers
+
+tests bruités
+
+12. Notes pour Claude Code
+Le parser doit être pur
+
+Pas d’effet de bord
+
+Pas de trimming silencieux
+
+Pas de fallback implicite
+
+Pas de heuristique magique
+
+Tout doit être explicite
+
+Tout doit être testé
+
+13. Conclusion
+Ce document est la source de vérité pour la réécriture du parser.
+Toute modification doit être versionnée dans /doc/.

@@ -146,7 +146,9 @@ async fn cmd_lookup(
     }
 
     info!("Looking up: {target}");
-    let record = http::perform_lookup(1, &target, &config).await;
+    let cache   = crate::cache::LookupCache::new(std::time::Duration::from_secs(config.cache_ttl_secs));
+    let metrics = crate::metrics::RequestMetrics::new();
+    let record  = http::perform_lookup(1, &target, &config, &cache, &metrics).await;
 
     // Save to session file so `export` can reuse results.
     save_session(&[record.clone()])?;
@@ -181,9 +183,7 @@ async fn cmd_serve(bind_override: Option<String>) -> anyhow::Result<()> {
     let config = load_config();
     let bind_addr = bind_override.unwrap_or_else(|| config.listen_addr.clone());
 
-    let state = AppState::new();
-    // Inject the loaded config into state.
-    *state.config.write().await = config;
+    let state = AppState::with_config(config);
 
     let router = http::build_router(state);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;

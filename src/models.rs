@@ -1,6 +1,22 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// ---------------------------------------------------------------------------
+// DNS record type
+// ---------------------------------------------------------------------------
+
+/// A single DNS resource record (A, AAAA, CNAME, TXT, PTR…) with TTL.
+/// Returned by the DNS lookup step and embedded in [`IpRecord`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsRecord {
+    /// Record type as a string (e.g. "A", "AAAA", "CNAME", "TXT").
+    pub record_type: String,
+    /// Human-readable record value (IP, hostname, or text content).
+    pub value: String,
+    /// Time-to-live in seconds as returned by the authoritative server.
+    pub ttl: u32,
+}
+
 /// Ordered column names as shown in the UI table (spec §2.2).
 /// Used by export renderers to produce consistent column ordering.
 pub const COLUMNS: &[&str] = &[
@@ -55,7 +71,25 @@ pub struct IpRecord {
     pub abuse_contact: Option<String>,
     pub raw_whois: Option<String>,
     pub raw_rdap: Option<serde_json::Value>,
+    /// DNS records (A, AAAA, CNAME, TXT) with TTL, populated for hostname
+    /// targets. Not included in table columns — JSON/export only.
+    pub dns_records: Vec<DnsRecord>,
     pub lookup_errors: Vec<String>,
+    /// Remarks / comments extracted from WHOIS (P2-ENRICH-008).
+    /// Not included in the main grid — exposed for detail views.
+    pub remarks: Option<String>,
+    /// Last-updated date extracted from WHOIS brut (P2-ENRICH-009).
+    pub updated_at: Option<String>,
+    // ── WHOIS enrichment flags (P0-ENRICH-003) ────────────────────────────
+    // true  → field was empty after RDAP and was filled by WHOIS brut.
+    // false → field came from RDAP (or was never filled).
+    pub address_enriched: bool,
+    pub country_enriched: bool,
+    pub phone_enriched: bool,
+    pub fax_enriched: bool,
+    pub owner_enriched: bool,
+    pub remarks_enriched: bool,
+    pub dates_enriched: bool,
 }
 
 impl IpRecord {
@@ -86,7 +120,17 @@ impl IpRecord {
             abuse_contact: None,
             raw_whois: None,
             raw_rdap: None,
+            dns_records: Vec::new(),
             lookup_errors: Vec::new(),
+            remarks: None,
+            updated_at: None,
+            address_enriched: false,
+            country_enriched: false,
+            phone_enriched: false,
+            fax_enriched: false,
+            owner_enriched: false,
+            remarks_enriched: false,
+            dates_enriched: false,
         }
     }
 

@@ -1,0 +1,369 @@
+📘 AtlasIP — Full Backend Specification (v0.3)
+Modern IP OSINT tool inspired by IPNetInfo (NirSoft)
+Author: Absol3m
+Goal: Modernize IPNetInfo while preserving its core features, adding a modern Rust backend (DNS + RDAP + WHOIS), a local API, advanced exports, persistent configuration, internationalization, a Tauri UI, and a browser extension.
+
+--------------------------------------------------
+1. Functional Objectives
+--------------------------------------------------
+1.1. Primary Purpose
+AtlasIP is an OSINT tool focused on public IP addresses, designed to:
+
+Identify the owner of an IP (organization, netname, range).
+
+Retrieve contact information (address, phone, fax, email, abuse contacts).
+
+Identify country / region / registry.
+
+Assist in email analysis (spam origin, phishing, etc.).
+
+Provide a local API for a modern UI and browser extension.
+
+Offer a modern, open‑source, cross‑platform alternative to IPNetInfo.
+
+1.2. IPNetInfo Heritage (NirSoft)
+AtlasIP must replicate the key behaviors of IPNetInfo:
+
+Ignore non‑public IPs (private, loopback, link‑local, multicast, documentation…).
+
+Extract IPs from email headers (handled in frontend).
+
+Query ARIN first, then fallback to other RIRs (RIPE, APNIC, LACNIC, AFRINIC).
+
+Parse raw WHOIS and present structured data in a table.
+
+Export results (CSV, tab‑delimited, raw WHOIS).
+
+Support proxies (SOCKS4/5).
+
+Handle network errors and rate‑limits gracefully.
+
+Provide a CLI for automated lookups.
+
+1.3. Modernization Compared to IPNetInfo
+AtlasIP adds:
+
+A modern Rust backend (Tokio, Axum, reqwest, hickory-resolver).
+
+A DNS + RDAP + WHOIS pipeline (RDAP first, WHOIS fallback).
+
+A local HTTP API for UI / browser extension integration.
+
+Multiple export formats (CSV, TSV, TXT, HTML, XML, raw WHOIS).
+
+Persistent configuration (config.toml).
+
+Internationalization (JSON locales).
+
+A modern CLI.
+
+A Tauri UI (future).
+
+A browser extension (future).
+
+Full proxy support: SOCKS4, SOCKS5, HTTP, HTTPS.
+
+--------------------------------------------------
+2. Network Behavior & Lookup Pipeline
+--------------------------------------------------
+2.1. Filtering Non‑Public IPs
+AtlasIP processes public IPs only.
+
+The following must be rejected or ignored:
+
+IPv4
+Private (RFC 1918)
+
+Loopback
+
+Link‑local (APIPA)
+
+Multicast
+
+Documentation / reserved
+
+Future use (240/4)
+
+IPv6
+Loopback
+
+Unique Local (fc00::/7)
+
+Link‑local (fe80::/10)
+
+Multicast (ff00::/8)
+
+Behavior
+API lookup → 422 "Private or reserved IP not allowed".
+
+Bulk lookup → silently filtered.
+
+Pipeline → never invoked for these IPs.
+
+2.2. Lookup Pipeline (Public IPs Only)
+Step 1 — DNS forward (if hostname)
+Resolve A/AAAA.
+
+If resolved IP is non‑public → 422.
+
+Step 2 — PTR lookup (reverse DNS)
+Non‑blocking.
+
+Failure does not stop the pipeline.
+
+Step 3 — RDAP (primary source)
+Retrieve structured data:
+
+owner, org, country
+
+range, CIDR
+
+abuse contacts
+
+technical contacts
+
+registration info
+
+Step 4 — WHOIS fallback
+ARIN → referrals → final RIR.
+
+Parse ARIN‑style and RIPE‑style WHOIS.
+
+Extract useful fields.
+
+Detect errors (“rate limit exceeded”, “access denied”).
+
+2.3. Proxies & Timeouts
+AtlasIP supports four proxy types:
+
+Type	Supported	Notes
+SOCKS4	✔️	WHOIS + RDAP
+SOCKS5	✔️	WHOIS + RDAP
+HTTP	✔️	RDAP only
+HTTPS	✔️	RDAP only
+TOML Configuration
+Code
+[proxy]
+http = "http://127.0.0.1:8080"
+https = "https://127.0.0.1:8443"
+socks4 = "socks4://127.0.0.1:1080"
+socks5 = "socks5://127.0.0.1:1080"
+Proxy Priority
+socks5
+
+socks4
+
+https
+
+http
+
+Timeouts
+Configurable via default_timeout_ms.
+
+2.4. Error & Rate‑Limit Handling
+WHOIS “rate limit exceeded” → status = failed.
+
+WHOIS “access denied” → status = failed.
+
+RDAP unavailable → fallback to WHOIS.
+
+No panics, no unwraps.
+
+--------------------------------------------------
+3. Data Model
+--------------------------------------------------
+3.1. IpRecord
+Fields:
+
+id
+
+ip
+
+hostname
+
+resolved_name
+
+country
+
+state
+
+city
+
+owner_name
+
+org_name
+
+netname
+
+cidr
+
+range_start
+
+range_end
+
+abuse_emails
+
+contact_emails
+
+phone
+
+fax
+
+address
+
+created_at
+
+updated_at
+
+whois_source
+
+raw_whois
+
+3.2. COLUMNS and to_row()
+COLUMNS = ordered list of table columns.
+
+to_row() = convert record to Vec<String> in that order.
+
+Email lists → "email1; email2"
+
+Empty Option<T> → ""
+
+--------------------------------------------------
+4. Local HTTP API (Axum)
+--------------------------------------------------
+Endpoints:
+
+GET /health
+
+GET /lookup/ip/:ip
+
+GET /lookup/hostname/:host
+
+POST /lookup/bulk
+
+GET /export?format=...
+
+GET /config
+
+POST /config
+
+CORS permissive for browser extension.
+
+--------------------------------------------------
+5. Exports
+--------------------------------------------------
+Supported formats:
+
+CSV
+
+TSV
+
+TXT (vertical)
+
+TXT (horizontal)
+
+HTML (table)
+
+HTML (detailed view)
+
+XML
+
+Raw WHOIS
+
+Headers enabled by default (IPNetInfo behavior).
+
+--------------------------------------------------
+6. Configuration
+--------------------------------------------------
+6.1. config.toml
+Code
+listen_addr = "127.0.0.1:8080"
+default_timeout_ms = 5000
+ignore_private_ips = true
+max_concurrent_lookups = 32
+auto_retry_failed = false
+pause_every = 0
+pause_duration_ms = 0
+whois_server_override = ""
+
+[proxy]
+http = ""
+https = ""
+socks4 = ""
+socks5 = ""
+6.2. Functions
+AppConfig::load()
+
+AppConfig::save()
+
+AppConfig::default_path()
+
+--------------------------------------------------
+7. Internationalization
+--------------------------------------------------
+JSON files: locales/en.json, locales/fr.json.
+
+Automatic fallback.
+
+Used for error messages, CLI, UI.
+
+--------------------------------------------------
+8. CLI
+--------------------------------------------------
+Commands:
+
+atlasip lookup <ip|host>
+
+atlasip serve
+
+atlasip export --format csv
+
+atlasip --config <path>
+
+Modernized IPNetInfo options:
+
+--retry-failed
+
+--no-ipv6
+
+--whois-server <server>
+
+--pause-every <n>
+
+--pause-duration <ms>
+
+--------------------------------------------------
+9. Tauri UI (future)
+--------------------------------------------------
+Features:
+
+Results table
+
+IP detail view
+
+Exports
+
+Configuration
+
+Email header extraction
+
+URL extraction
+
+“Open in Google Maps”
+
+Dark mode
+
+French-style visual identity (Marianne)
+
+--------------------------------------------------
+10. Browser Extension (future)
+--------------------------------------------------
+Features:
+
+Retrieve current site’s IP
+
+Call local API
+
+Display owner / country / abuse contacts
+
+AtlasIP icon

@@ -1,5 +1,36 @@
 use std::{collections::HashSet, net::IpAddr};
 
+// ---------------------------------------------------------------------------
+// Date normalisation (P1-RDAP-004)
+// ---------------------------------------------------------------------------
+
+/// Normalise a date string to ISO 8601 (best-effort, non-panicking).
+///
+/// Rules:
+/// - Already contains `T` (e.g. `"2014-03-14T00:00:00Z"`) → returned as-is.
+/// - `YYYY-MM-DD` (10-char date-only) → appends `T00:00:00Z`.
+/// - Anything else → returned as-is (no silent failure).
+pub fn normalize_date(date: &str) -> String {
+    let d = date.trim();
+    // Already has a time component.
+    if d.contains('T') {
+        return d.to_owned();
+    }
+    // YYYY-MM-DD
+    if d.len() == 10 {
+        let b = d.as_bytes();
+        if b[4] == b'-'
+            && b[7] == b'-'
+            && b[0..4].iter().all(|c| c.is_ascii_digit())
+            && b[5..7].iter().all(|c| c.is_ascii_digit())
+            && b[8..10].iter().all(|c| c.is_ascii_digit())
+        {
+            return format!("{d}T00:00:00Z");
+        }
+    }
+    d.to_owned()
+}
+
 /// Return `true` if `ip` is a routable public address.
 /// Returns `false` for RFC-1918 private ranges, loopback, link-local,
 /// multicast, documentation blocks, and broadcast.
@@ -254,5 +285,30 @@ mod tests {
     fn test_is_hostname() {
         assert!(is_hostname("example.com"));
         assert!(!is_hostname("8.8.8.8"));
+    }
+
+    // --- normalize_date ---
+
+    #[test]
+    fn test_normalize_date_already_iso8601() {
+        assert_eq!(normalize_date("2014-03-14T00:00:00Z"), "2014-03-14T00:00:00Z");
+        assert_eq!(normalize_date("2003-03-17T12:15:57Z"), "2003-03-17T12:15:57Z");
+    }
+
+    #[test]
+    fn test_normalize_date_date_only() {
+        assert_eq!(normalize_date("2023-12-28"), "2023-12-28T00:00:00Z");
+    }
+
+    #[test]
+    fn test_normalize_date_trims_whitespace() {
+        assert_eq!(normalize_date("  2023-12-28  "), "2023-12-28T00:00:00Z");
+        assert_eq!(normalize_date("  2023-12-28T10:00:00Z  "), "2023-12-28T10:00:00Z");
+    }
+
+    #[test]
+    fn test_normalize_date_unknown_format_passthrough() {
+        assert_eq!(normalize_date("March 14, 2014"), "March 14, 2014");
+        assert_eq!(normalize_date(""), "");
     }
 }
