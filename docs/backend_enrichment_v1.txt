@@ -1,0 +1,266 @@
+ATLASIP — BACKEND ENRICHMENT BACKLOG v1.0
+===========================================================
+Document de référence à placer dans /doc/backend_enrichment_v1.txt
+Ce fichier décrit l’enrichissement WHOIS brut au‑dessus du backend RDAP/WHOIS/DNS existant.
+
+Objectif : avoir au minimum le même niveau d’information visible qu’IPNetInfo, sans casser la normalisation RDAP actuelle, en marquant clairement les champs enrichis.
+
+
+===========================================================
+PRINCIPES GÉNÉRAUX
+===========================================================
+
+1. RDAP reste la source principale
+- RDAP fournit la base : owner, network, CIDR, range, status, country, abuse, contacts, dates.
+- WHOIS brut ne doit JAMAIS écraser un champ déjà rempli par RDAP.
+
+2. WHOIS brut = enrichissement optionnel
+- WHOIS brut ne sert qu’à COMPLÉTER les champs vides.
+- Si RDAP ne fournit pas une info, WHOIS brut peut la proposer.
+- Si RDAP fournit déjà une info, WHOIS brut est ignoré pour ce champ.
+
+3. Transparence
+- Tout champ enrichi par WHOIS brut doit être marqué comme tel (icône, suffixe, flag).
+- L’utilisateur doit pouvoir distinguer “RDAP natif” vs “enrichi via WHOIS brut”.
+
+4. Aucun champ vide
+- Si RDAP + WHOIS brut ne donnent rien : afficher “N/A” ou “—”, mais jamais une cellule vide.
+- Objectif : ne pas paraître “moins complet” qu’IPNetInfo.
+
+
+===========================================================
+CHAMPS CIBLES POUR ENRICHISSEMENT
+===========================================================
+
+Les champs suivants peuvent être enrichis par WHOIS brut SI et seulement s’ils sont vides après RDAP :
+
+1. Adresse postale
+- Champ : address
+- Source WHOIS : address:, street:, city:, state:, country:, postal-code:, OrgAddress, etc.
+- Fusion : concaténation propre, format “ligne, ville, région, code, pays”.
+
+2. Country
+- Champ : country
+- Source WHOIS : Country:, country:, Ctry:
+- RDAP > WHOIS, mais WHOIS peut compléter si RDAP ne fournit rien.
+
+3. Phone / Fax
+- Champs : phone, fax
+- Source WHOIS : Phone:, Fax:, OrgTechPhone:, OrgAbusePhone:, etc.
+- Normalisation : format brut conservé (pas de parsing agressif).
+
+4. OrgName / OrgID / NetName
+- Champ : owner (complément) ou champ secondaire interne
+- Source WHOIS : OrgName:, OrgId:, NetName:
+- Utilisé pour enrichir l’affichage, pas pour casser owner RDAP.
+
+5. Remarks / Commentaires
+- Champ : remarks (interne ou future colonne)
+- Source WHOIS : Remarks:, Comment:, Note:
+- Optionnel, affiché en détail, pas dans la grille principale.
+
+6. Dates supplémentaires
+- Champs : created_at, updated_at (internes)
+- Source WHOIS : Created:, Updated:, RegDate:, etc.
+- Ne remplace pas Allocated RDAP, mais peut compléter les détails.
+
+
+===========================================================
+RÈGLES DE FUSION RDAP + WHOIS BRUT
+===========================================================
+
+R1 — Priorité RDAP
+- Si RDAP fournit un champ non vide → on le garde.
+- WHOIS brut ne peut PAS écraser un champ RDAP.
+
+R2 — Enrichissement conditionnel
+- Si RDAP ne fournit rien pour un champ → WHOIS brut peut le remplir.
+- Si WHOIS brut ne fournit rien → “N/A” ou “—”.
+
+R3 — Marquage des champs enrichis
+- Tout champ rempli par WHOIS brut doit être marqué :
+  - soit via un flag interne (ex: enriched = true)
+  - soit via un suffixe (ex: “(WHOIS)” dans un tooltip)
+  - soit via une icône dans l’UI.
+- L’API doit exposer un indicateur par champ (ex: address_enriched: bool).
+
+R4 — Pas de parsing agressif
+- WHOIS brut est souvent sale et incohérent.
+- On ne tente pas de “deviner” des structures complexes.
+- On extrait uniquement ce qui est clairement identifiable.
+
+R5 — Logs
+- Toute utilisation de WHOIS brut pour enrichissement doit être loggée (niveau debug).
+- Permet de tracer les cas où WHOIS brut a été utilisé.
+
+
+===========================================================
+TÂCHES P0 — BLOQUANT
+===========================================================
+
+P0-ENRICH-001
+Catégorie : Fusion RDAP/WHOIS
+Description : Implémenter une couche d’enrichissement WHOIS brut au‑dessus du modèle IpRecord.
+Attendu :
+- Nouveau module : whois_enrichment.rs
+- Fonction : enrich_from_whois_raw(ip_record, whois_raw) -> IpRecord
+- Respect strict des règles de fusion (RDAP > WHOIS).
+Impact : Base de l’enrichissement.
+
+P0-ENRICH-002
+Catégorie : Champs vides
+Description : Aucun champ ne doit rester vide si WHOIS brut fournit une valeur.
+Attendu :
+- address, country, phone, fax, owner (complément), remarks, dates → enrichis si possible.
+- Sinon : “N/A” ou “—”.
+Impact : Parité perçue avec IPNetInfo.
+
+P0-ENRICH-003
+Catégorie : Marquage
+Description : Les champs enrichis doivent être marqués explicitement.
+Attendu :
+- Ajout de flags booléens dans IpRecord : address_enriched, phone_enriched, fax_enriched, etc.
+- Exposition de ces flags dans la réponse API.
+Impact : Transparence fonctionnelle.
+
+
+===========================================================
+TÂCHES P1 — CRITIQUE
+===========================================================
+
+P1-ENRICH-004
+Catégorie : Address
+Description : Extraire et fusionner proprement l’adresse postale depuis WHOIS brut.
+Attendu :
+- Parsing simple des lignes contenant address/street/city/state/postal/country.
+- Fusion en une seule chaîne lisible.
+Impact : Adresse visible comme dans IPNetInfo.
+
+P1-ENRICH-005
+Catégorie : Phone/Fax
+Description : Extraire les numéros de téléphone/fax si présents.
+Attendu :
+- Recherche des patterns Phone:, Fax:, OrgTechPhone:, OrgAbusePhone:.
+- Remplissage des champs phone/fax si vides.
+Impact : Parité avec IPNetInfo sur les contacts.
+
+P1-ENRICH-006
+Catégorie : Country
+Description : Compléter le pays si RDAP ne le fournit pas.
+Attendu :
+- Extraction depuis WHOIS brut (Country:, Ctry:).
+- Normalisation minimale (code pays ou nom brut).
+Impact : Champ Country rarement vide.
+
+
+===========================================================
+TÂCHES P2 — MAJEUR
+===========================================================
+
+P2-ENRICH-007
+Catégorie : OrgName / NetName
+Description : Enrichir l’owner avec des infos WHOIS supplémentaires.
+Attendu :
+- Extraction OrgName:, NetName:, OrgId:.
+- Utilisation en complément (tooltip, détails), pas en remplacement.
+Impact : Plus de contexte sur le propriétaire.
+
+P2-ENRICH-008
+Catégorie : Remarks
+Description : Exposer les remarques WHOIS dans une section de détails.
+Attendu :
+- Extraction des lignes Remarks:, Comment:, Note:.
+- Stockage dans un champ remarks (liste ou texte).
+Impact : Plus d’infos avancées pour les power users.
+
+P2-ENRICH-009
+Catégorie : Dates
+Description : Ajouter created/updated depuis WHOIS brut.
+Attendu :
+- Extraction Created:, Updated:, RegDate:, etc.
+- Normalisation simple (ISO 8601 si possible).
+Impact : Contexte temporel plus riche.
+
+
+===========================================================
+TÂCHES P3 — POLISH
+===========================================================
+
+P3-ENRICH-010
+Catégorie : UI / Marquage
+Description : Affiner l’affichage des champs enrichis dans l’UI.
+Attendu :
+- Icône ou badge discret pour les champs enrichis.
+- Tooltip “Enrichi via WHOIS brut”.
+Impact : UX pro, transparente.
+
+P3-ENRICH-011
+Catégorie : Logs
+Description : Ajouter des logs détaillés sur l’enrichissement.
+Attendu :
+- Logs debug quand un champ est enrichi.
+- Possibilité de tracer les cas d’enrichissement excessif.
+Impact : Observabilité.
+
+
+===========================================================
+SPÉCIFICATIONS TECHNIQUES
+===========================================================
+
+1. Module whois_enrichment
+- Entrées : IpRecord (post-RDAP), whois_raw (String)
+- Sortie : IpRecord enrichi
+- Ne modifie que les champs vides.
+- Ajoute des flags *_enriched.
+
+2. Modèle IpRecord (extension)
+- Champs existants conservés.
+- Ajout de :
+  - address_enriched: bool
+  - country_enriched: bool
+  - phone_enriched: bool
+  - fax_enriched: bool
+  - owner_enriched: bool
+  - remarks_enriched: bool
+  - dates_enriched: bool
+
+3. API
+- Les champs enrichis sont renvoyés comme les autres.
+- Les flags *_enriched sont exposés pour l’UI.
+
+4. UI (future intégration)
+- Affichage identique pour tous les champs.
+- Marquage visuel léger pour les champs enrichis.
+
+
+===========================================================
+TESTS QA BACKEND ENRICHMENT
+===========================================================
+
+Tests WHOIS enrichissement
+- IP avec RDAP riche + WHOIS riche → RDAP prioritaire, WHOIS ignoré pour les champs déjà remplis.
+- IP avec RDAP pauvre + WHOIS riche → champs complétés par WHOIS.
+- IP avec RDAP pauvre + WHOIS pauvre → “N/A” / “—”.
+
+Tests Address
+- WHOIS avec address multi-lignes.
+- WHOIS sans address.
+- WHOIS avec address partielle.
+
+Tests Phone/Fax
+- WHOIS avec plusieurs numéros.
+- WHOIS sans téléphone.
+- WHOIS avec formats exotiques.
+
+Tests Country
+- RDAP sans country + WHOIS avec Country.
+- RDAP avec country + WHOIS différent (RDAP gagne).
+
+Tests Flags
+- Vérifier que *_enriched = true uniquement si WHOIS a rempli le champ.
+- Vérifier que *_enriched = false si RDAP a fourni la valeur.
+
+
+===========================================================
+FIN DU DOCUMENT
+===========================================================

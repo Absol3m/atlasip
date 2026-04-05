@@ -1,0 +1,276 @@
+ATLASIP — BACKLOG FRONTEND v1.0
+===========================================================
+Document de référence à placer dans /doc/backlog_frontend_v1.txt
+Ce fichier regroupe tous les bugs, specs, correctifs et tâches liés au FRONTEND d’AtlasIP.
+Le parser v2 est exclu (géré dans un document séparé).
+
+Structure : Criticité (P0 → P3) → Catégorie → Bug détaillé.
+
+
+===========================================================
+P0 — CRITICITÉ CATASTROPHIQUE (BLOQUANT)
+===========================================================
+
+P0-UX-001
+Catégorie : Validation UI
+Description : Le bouton Analyze reste actif alors que des entrées invalides sont présentes.
+Reproduction : Entrer "1.1.1.1, 999.999.999.999".
+Observé : Analyze (1) reste bleu.
+Attendu : Analyze doit être gris tant qu’une seule entrée est invalide.
+Impact : Analyse impossible à fiabiliser.
+Sprint : Dépend du parser v2 + UI v1.
+
+P0-UX-002
+Catégorie : Feedback utilisateur
+Description : Aucun message d’erreur global n’est affiché en cas d’entrée invalide.
+Reproduction : Entrer une IP invalide.
+Observé : Aucun message.
+Attendu : Message global obligatoire.
+Impact : L’utilisateur ne comprend pas pourquoi l’analyse est bloquée.
+Sprint : UI v1.
+
+P0-UX-003
+Catégorie : Badge / Mode détecté
+Description : Le badge ne reflète pas le mode réel (IPv4 / IPv6 / Hostname / Mixed).
+Reproduction : Entrer "google.fr 1.1.1.1".
+Observé : Aucun badge ou mauvais badge.
+Attendu : Badge = MIXED MODE.
+Impact : Mauvaise compréhension du parsing.
+Sprint : UI v1.
+
+P0-DATAGRID-001
+Catégorie : DataGrid
+Description : Le DataGrid n’affiche pas de header.
+Reproduction : Analyser une IP.
+Observé : Pas de titre "Results (n)".
+Attendu : Header visible.
+Impact : Illisible pour l’utilisateur.
+Sprint : UI v1.
+
+P0-DATAGRID-002
+Catégorie : DataGrid
+Description : Le DataGrid ne s’affiche pas si les résultats sont vides.
+Reproduction : Entrée invalide + correction.
+Observé : Le DataGrid ne réapparaît pas.
+Attendu : Le DataGrid doit s’afficher dès qu’il y a des résultats.
+Impact : UX cassée.
+Sprint : UI v1.
+
+
+===========================================================
+P1 — CRITICITÉ CRITIQUE
+===========================================================
+
+P1-UX-004
+Catégorie : Compteur
+Description : Le compteur affiche des valeurs incorrectes.
+Reproduction : "google.fr 1.1.1.1".
+Observé : "1 valid IP".
+Attendu : "1 hostname, 1 IP".
+Impact : Mauvaise compréhension des résultats.
+Sprint : UI v1.
+
+P1-UX-005
+Catégorie : Mixed Mode UI
+Description : Le Mixed Mode n’est pas affiché dans l’UI.
+Reproduction : "google.fr 8.8.8.8".
+Observé : Aucun mode affiché.
+Attendu : MIXED MODE.
+Impact : Incohérence UI.
+Sprint : UI v1.
+
+P1-INPUT-001
+Catégorie : Input
+Description : L’input ne limite pas la hauteur (auto-height illimité).
+Reproduction : Coller un texte long.
+Observé : L’input prend tout l’écran.
+Attendu : Max 2 lignes.
+Impact : UX dégradée.
+Sprint : UI v1.
+
+P1-DARKMODE-001
+Catégorie : Dark Mode
+Description : Scrollbars invisibles en dark mode.
+Reproduction : Résultats longs.
+Observé : Scroll invisible.
+Attendu : Scroll visible.
+Impact : Navigation difficile.
+Sprint : UI v1.
+
+P1-DATAGRID-003
+Catégorie : DataGrid
+Description : Les colonnes ne sont pas réordonnables.
+Reproduction : Drag & drop.
+Observé : Rien.
+Attendu : Colonnes réordonnables.
+Impact : UX limitée.
+Sprint : UI v2.
+
+P1-DATAGRID-004
+Catégorie : DataGrid
+Description : Autosize des colonnes incorrect.
+Reproduction : Résultats variés.
+Observé : Colonnes trop petites ou trop grandes.
+Attendu : Autosize intelligent.
+Impact : Lisibilité réduite.
+Sprint : UI v2.
+
+
+===========================================================
+P2 — CRITICITÉ MAJEUR
+===========================================================
+
+P2-UX-006
+Catégorie : Placeholder
+Description : Placeholder statique.
+Observé : "Enter IPs…".
+Attendu : Placeholder dynamique selon mode détecté.
+Sprint : UI polish.
+
+P2-UX-007
+Catégorie : Focus
+Description : Le focus n’est pas restauré après analyse.
+Reproduction : Analyser → input perd le focus.
+Attendu : Focus restauré.
+Sprint : UI polish.
+
+P2-LAYOUT-001
+Catégorie : Layout
+Description : Footer non sticky.
+Observé : Footer disparaît en scroll.
+Attendu : Footer fixe.
+Sprint : UI polish.
+
+P2-DATAGRID-005
+Catégorie : DataGrid
+Description : Sticky header absent.
+Reproduction : Scroll vertical.
+Observé : Header disparaît.
+Attendu : Header sticky.
+Sprint : UI v2.
+
+P2-DATAGRID-006
+Catégorie : DataGrid
+Description : Sticky first column non implémenté.
+Sprint : UI v2.
+
+P2-UX-008
+Catégorie : Feedback
+Description : Les erreurs ne sont pas contextualisées.
+Sprint : UI polish.
+
+
+===========================================================
+P3 — CRITICITÉ MINEUR / POLISH
+===========================================================
+
+P3-UI-001
+Catégorie : Polish
+Description : Contraste faible sur certains labels en dark mode.
+Sprint : UI polish.
+
+P3-UI-002
+Catégorie : Polish
+Description : Animation d’apparition du DataGrid absente.
+Sprint : UI polish.
+
+P3-UI-003
+Catégorie : Polish
+Description : Icônes non alignées dans les actions.
+Sprint : UI polish.
+
+P3-UX-009
+Catégorie : Ergonomie
+Description : Le bouton Analyze pourrait être plus visible.
+Sprint : UI polish.
+
+P3-LAYOUT-002
+Catégorie : Layout
+Description : Marges internes incohérentes.
+Sprint : UI polish.
+
+
+===========================================================
+SPÉCIFICATIONS FRONTEND (HORS PARSER)
+===========================================================
+
+1. Input
+- auto-height max 2 lignes
+- trimming contrôlé (pas silencieux)
+- gestion du paste massif
+- placeholder dynamique
+- feedback immédiat
+
+2. Badge
+- IPv4 DETECTED
+- IPv6 DETECTED
+- HOSTNAME DETECTED
+- MIXED MODE
+- INVALID
+
+3. Messages d’erreur
+- message global obligatoire
+- message contextuel optionnel
+- cohérence avec le parser
+
+4. Compteur
+- compter IPs, hostnames, URLs
+- ne jamais ignorer une entrée valide
+
+5. DataGrid
+- header visible
+- sticky header
+- sticky first column (optionnel)
+- autosize intelligent
+- drag & drop
+- actions d’export
+
+6. Layout
+- flex vertical
+- DataGrid = flex: 1
+- footer sticky
+- responsive desktop/laptop
+
+7. Dark Mode
+- scrollbars visibles
+- contraste correct
+- icônes adaptées
+
+
+===========================================================
+TESTS QA FRONTEND
+===========================================================
+
+Tests Input
+- paste massif
+- texte mixte
+- multi-lignes
+- trimming
+
+Tests Badge
+- IPv4 only
+- IPv6 only
+- hostname only
+- mixed mode
+- invalid
+
+Tests DataGrid
+- autosize
+- drag & drop
+- sticky header
+- sticky column
+- exports
+
+Tests Layout
+- responsive
+- dark mode
+- scrollbars
+
+Tests Feedback
+- erreurs globales
+- erreurs contextuelles
+
+
+===========================================================
+FIN DU DOCUMENT
+===========================================================

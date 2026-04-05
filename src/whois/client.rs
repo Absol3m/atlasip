@@ -19,6 +19,46 @@ const WHOIS_PORT: u16 = 43;
 const MAX_RESPONSE_BYTES: usize = 512 * 1024; // 512 KB
 
 // ---------------------------------------------------------------------------
+// Rate-limit / access-denied detection (P0-WHOIS-001, P0-NETWORK-001)
+// ---------------------------------------------------------------------------
+
+/// Return `Some(reason)` if the WHOIS response indicates the server has
+/// rate-limited or blocked the query.  Used to set `status = failed`
+/// rather than silently returning empty results (spec §2.4).
+pub fn detect_rate_limit(raw: &str) -> Option<String> {
+    let lower = raw.to_ascii_lowercase();
+    // Common rate-limit / denial phrases across ARIN, RIPE, APNIC, LACNIC.
+    let triggers: &[&str] = &[
+        "rate limit exceeded",
+        "query rate limit",
+        "exceeded the maximum",
+        "too many requests",
+        "access denied",
+        "access restricted",
+        "blocked",
+        "permission denied",
+    ];
+    if triggers.iter().any(|t| lower.contains(t)) {
+        // Return the first non-comment content line as the reason.
+        let reason = raw
+            .lines()
+            .map(str::trim)
+            .find(|l| {
+                !l.is_empty()
+                    && !l.starts_with('%')
+                    && !l.starts_with('#')
+                    && triggers
+                        .iter()
+                        .any(|t| l.to_ascii_lowercase().contains(t))
+            })
+            .unwrap_or("Rate limited or access denied")
+            .to_owned();
+        return Some(reason);
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -73,6 +113,9 @@ impl WhoisClient {
     /// 2. Query the referred server with the original target.
     /// 3. If the referral fails or returns no useful data, return the IANA
     ///    response as-is.
+    ///
+    /// Rate-limit / access-denied responses are propagated as errors so the
+    /// caller can set `status = failed` (spec §2.4 — P0-WHOIS-001).
     pub async fn query(&self, target: &str) -> Result<WhoisResult> {
         let target = target.trim();
 
@@ -89,6 +132,10 @@ impl WhoisClient {
         if let Some(refer_server) = extract_refer(&iana_raw) {
             match self.raw_query(&refer_server, target).await {
                 Ok(detailed) if has_useful_content(&detailed) => {
+                    // Check for rate-limit before returning.
+                    if let Some(reason) = detect_rate_limit(&detailed) {
+                        anyhow::bail!("WHOIS rate limit from {}: {}", refer_server, reason);
+                    }
                     return Ok(WhoisResult {
                         raw: detailed,
                         server: refer_server,
@@ -137,11 +184,16 @@ impl WhoisClient {
 
     /// Parse a raw WHOIS text response into structured fields.
     ///
-    /// Handles both:
-    /// - **RIPE-style** (RIPE, APNIC, LACNIC, AFRINIC): lowercase keys,
+    /// Handles:
+    /// - **RIPE-style** (RIPE, APNIC, AFRINIC): lowercase RPSL keys,
     ///   `inetnum:`, `netname:`, multi-line `address:`, `e-mail:`.
     /// - **ARIN-style**: CamelCase keys, `NetRange:`, `NetName:`, split
     ///   address (`Address:` + `City:` + `StateProv:` + `PostalCode:`).
+    /// - **LACNIC-style**: `owner:`, `ownerid:`, `responsible:`, `inetnum:`
+    ///   (P0-WHOIS-002 — multi-format support).
+    ///
+    /// Dates are normalised to ISO 8601 (P1-RDAP-004).
+    /// Emails are fully de-duplicated (P1-WHOIS-003).
     pub fn parse(raw: &str) -> ParsedWhois {
         let mut parsed = ParsedWhois::default();
 
@@ -195,7 +247,8 @@ impl WhoisClient {
 
             match key_lc.as_str() {
                 // ── Country ──────────────────────────────────────────────────
-                "country" => {
+                // `Country:` is the canonical key; `Ctry:` is a common alias.
+                "country" | "ctry" => {
                     parsed.country.get_or_insert_with(|| value.to_owned());
                 }
 
@@ -207,17 +260,24 @@ impl WhoisClient {
 
                 // ── Owner / organisation name ─────────────────────────────────
                 // Priority order (highest → lowest):
-                //   orgname / org-name  >  organization  >  descr
+                //   orgname / org-name  >  owner (LACNIC)  >
+                //   organization  >  descr
                 //
                 // RIPE response: `descr:` appears before `org-name:`.
                 // ARIN response: `Organization:` appears before `OrgName:`.
-                // In both cases the more-specific key must win, so we always
-                // overwrite when we see `orgname` / `org-name`.
+                // LACNIC response: `owner:` is the primary org key.
+                // In all cases the more-specific key must win.
                 "orgname" | "org-name" => {
+                    // Unconditional overwrite — this is the canonical org name.
                     parsed.owner_name = Some(value.to_owned());
                 }
+                // LACNIC: `owner:` is equivalent to orgname.
+                "owner" => {
+                    // Use get_or_insert so orgname still wins if seen first.
+                    parsed.owner_name.get_or_insert_with(|| value.to_owned());
+                }
                 "organization" | "organisation" => {
-                    // Lower priority than orgname — only set if not yet known.
+                    // Lower priority than orgname / owner — only set if not yet known.
                     parsed.owner_name.get_or_insert_with(|| value.to_owned());
                 }
                 // `descr:` used as owner_name fallback of last resort.
@@ -267,11 +327,13 @@ impl WhoisClient {
                     push_unique(&mut parsed.emails, value);
                 }
 
-                // ── Phone / fax ───────────────────────────────────────────────
-                "phone" | "orgabusephone" | "orgtechphone" => {
+                // ── Phone / fax (P2-WHOIS-007) ────────────────────────────────
+                // RIPE: `phone:` / ARIN: `OrgAbusePhone:`, `OrgTechPhone:`
+                // LACNIC: `phone:` (same key, handled generically)
+                "phone" | "orgabusephone" | "orgtechphone" | "orgadminphone" => {
                     parsed.phone.get_or_insert_with(|| value.to_owned());
                 }
-                "fax-no" | "fax" => {
+                "fax-no" | "fax" | "fax-number" => {
                     parsed.fax.get_or_insert_with(|| value.to_owned());
                 }
 
@@ -301,10 +363,12 @@ impl WhoisClient {
                     parsed.status.get_or_insert_with(|| value.to_owned());
                 }
 
-                // ── Allocation date ───────────────────────────────────────────
-                // ARIN: `RegDate:` / RIPE: `created:`
+                // ── Allocation date (normalised to ISO 8601) ─────────────────
+                // ARIN: `RegDate:` / RIPE/LACNIC: `created:` (P1-RDAP-004).
                 "regdate" | "created" | "registration-date" => {
-                    parsed.allocated.get_or_insert_with(|| value.to_owned());
+                    parsed.allocated.get_or_insert_with(|| {
+                        crate::utils::normalize_date(value)
+                    });
                 }
 
                 // ── Contact name ──────────────────────────────────────────────
@@ -314,6 +378,10 @@ impl WhoisClient {
                 }
                 // ARIN: `OrgTechName:` / `OrgAdminName:`
                 "orgtechname" | "orgadminname" => {
+                    parsed.contact_name.get_or_insert_with(|| value.to_owned());
+                }
+                // LACNIC: `responsible:` is the contact person / NOC name.
+                "responsible" => {
                     parsed.contact_name.get_or_insert_with(|| value.to_owned());
                 }
 
@@ -512,7 +580,8 @@ OrgAbusePhone:  +1-650-253-0000
         assert_eq!(p.owner_name.as_deref(), Some("Google LLC"));
         assert_eq!(p.country.as_deref(), Some("US"));
         assert_eq!(p.postal_code.as_deref(), Some("94043"));
-        assert_eq!(p.allocated.as_deref(), Some("2023-12-28"));
+        // Date is normalised to ISO 8601 (P1-RDAP-004).
+        assert_eq!(p.allocated.as_deref(), Some("2023-12-28T00:00:00Z"));
         assert!(p.emails.contains(&"arin-contact@google.com".to_owned()));
         assert!(p.abuse_emails.contains(&"network-abuse@google.com".to_owned()));
         assert_eq!(p.abuse_contact.as_deref(), Some("Abuse"));
@@ -574,6 +643,105 @@ address:        Amsterdam
         assert!(p.country.is_none());
         assert!(p.from_ip.is_none());
         assert!(p.emails.is_empty());
+    }
+
+    // ── LACNIC format (P0-WHOIS-002) ────────────────────────────────────────
+
+    #[test]
+    fn test_parse_lacnic_style() {
+        let raw = "\
+% Joint Whois - whois.lacnic.net
+% This server accepts single ASN, IPv4 or IPv6 queries
+
+inetnum:     200.160.0.0/20
+status:      reallocated
+owner:       NIC.br
+ownerid:     005.506.560/0001-36
+country:     BR
+owner-c:     NICBR
+responsible: Carlos Afonso
+address:     Av. das Nações Unidas, 11541
+address:     Brooklin
+phone:       +55 11 5509-3500
+fax-no:      +55 11 5509-3501
+e-mail:      noc@nic.br
+abuse-mailbox: cert@cert.br
+created:     19970401
+changed:     20230101
+";
+        let p = WhoisClient::parse(raw);
+
+        assert_eq!(p.from_ip.as_deref(), Some("200.160.0.0/20"),
+            "LACNIC inetnum (CIDR) should be in from_ip");
+        assert_eq!(p.country.as_deref(), Some("BR"));
+        assert_eq!(p.owner_name.as_deref(), Some("NIC.br"));
+        assert_eq!(p.contact_name.as_deref(), Some("Carlos Afonso"),
+            "responsible: should map to contact_name");
+        assert_eq!(p.phone.as_deref(), Some("+55 11 5509-3500"));
+        assert_eq!(p.fax.as_deref(), Some("+55 11 5509-3501"));
+        assert!(p.emails.contains(&"noc@nic.br".to_owned()),
+            "e-mail should be in emails");
+        assert!(p.abuse_emails.contains(&"cert@cert.br".to_owned()),
+            "abuse-mailbox should be in abuse_emails");
+    }
+
+    // ── Rate-limit detection (P0-WHOIS-001 / spec §2.4) ─────────────────────
+
+    #[test]
+    fn test_detect_rate_limit_arin() {
+        let raw = "% Error: rate limit exceeded. Please try again later.\n";
+        assert!(detect_rate_limit(raw).is_some());
+    }
+
+    #[test]
+    fn test_detect_rate_limit_access_denied() {
+        let raw = "% Access Denied.\ninetnum: 8.0.0.0 - 8.255.255.255\n";
+        assert!(detect_rate_limit(raw).is_some());
+    }
+
+    #[test]
+    fn test_detect_rate_limit_none_for_normal_response() {
+        let raw = "netname: GOGL\ncountry: US\nstatus: ASSIGNED\n";
+        assert!(detect_rate_limit(raw).is_none());
+    }
+
+    #[test]
+    fn test_detect_rate_limit_too_many_requests() {
+        let raw = "% Too many requests. Please slow down.\n";
+        assert!(detect_rate_limit(raw).is_some());
+    }
+
+    // ── Date normalisation in WHOIS (P1-RDAP-004) ────────────────────────────
+
+    #[test]
+    fn test_parse_whois_date_normalization() {
+        let raw = "netname: TEST\nregdate: 2023-12-28\nstatus: ASSIGNED\n";
+        let p = WhoisClient::parse(raw);
+        assert_eq!(p.allocated.as_deref(), Some("2023-12-28T00:00:00Z"));
+    }
+
+    #[test]
+    fn test_parse_whois_date_already_iso() {
+        let raw = "netname: TEST\ncreated: 2003-03-17T12:15:57Z\nstatus: ASSIGNED\n";
+        let p = WhoisClient::parse(raw);
+        assert_eq!(p.allocated.as_deref(), Some("2003-03-17T12:15:57Z"));
+    }
+
+    // ── Multi-email extraction (P1-WHOIS-003) ────────────────────────────────
+
+    #[test]
+    fn test_parse_multi_email() {
+        let raw = "\
+inetnum: 10.0.0.0 - 10.255.255.255
+e-mail: first@example.com
+e-mail: second@example.com
+e-mail: first@example.com
+";
+        let p = WhoisClient::parse(raw);
+        // De-duplicated; order preserved.
+        assert_eq!(p.emails.len(), 2, "Expected de-duplicated emails");
+        assert!(p.emails.contains(&"first@example.com".to_owned()));
+        assert!(p.emails.contains(&"second@example.com".to_owned()));
     }
 
     // ── Integration tests (real network) ────────────────────────────────────

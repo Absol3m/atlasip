@@ -1,0 +1,253 @@
+ATLASIP — BACKLOG PERFORMANCE v1.0
+===========================================================
+Document de référence à placer dans /doc/backlog_performance_v1.txt
+Ce fichier regroupe tous les bugs, specs, correctifs et tâches liés aux PERFORMANCES d’AtlasIP.
+Le parser v2 est exclu (géré dans un document séparé).
+
+Structure : Criticité (P0 → P3) → Catégorie → Bug détaillé.
+
+
+===========================================================
+P0 — CRITICITÉ CATASTROPHIQUE (BLOQUANT)
+===========================================================
+
+P0-PERF-001
+Catégorie : Backend / Réseau
+Description : Pas de timeout global pour les requêtes RDAP/WHOIS/DNS.
+Reproduction : Interroger une IP lente.
+Observé : L’application reste bloquée indéfiniment.
+Attendu : Timeout global (ex : 5s) + fallback propre.
+Impact : Analyse impossible.
+Sprint : Performance v1.
+
+P0-PERF-002
+Catégorie : Backend / Réseau
+Description : Pas de gestion centralisée des erreurs réseau.
+Reproduction : Couper la connexion.
+Observé : Panique ou erreur non catchée.
+Attendu : Gestion d’erreur propre + message clair.
+Impact : Crash potentiel.
+Sprint : Performance v1.
+
+P0-PERF-003
+Catégorie : Backend / Parallélisation
+Description : Les requêtes RDAP sont exécutées séquentiellement.
+Reproduction : Analyser 10 IPs.
+Observé : Temps x10.
+Attendu : Parallélisation (tokio join_all).
+Impact : Lenteur critique.
+Sprint : Performance v1.
+
+P0-PERF-004
+Catégorie : Backend / Caching
+Description : Aucun caching local n’est implémenté.
+Reproduction : Analyser 8.8.8.8 deux fois.
+Observé : Deux requêtes RDAP identiques.
+Attendu : Cache TTL (ex : 1h).
+Impact : Charge inutile + lenteur.
+Sprint : Performance v1.
+
+
+===========================================================
+P1 — CRITICITÉ CRITIQUE
+===========================================================
+
+P1-PERF-005
+Catégorie : Backend / Batching
+Description : Pas de batching des requêtes DNS.
+Reproduction : Résolution de 20 hostnames.
+Observé : 20 requêtes individuelles.
+Attendu : Batching (resolver async).
+Sprint : Performance v1.
+
+P1-PERF-006
+Catégorie : Backend / Retry
+Description : Pas de retry intelligent en cas d’échec réseau.
+Reproduction : Timeout ponctuel.
+Observé : Échec direct.
+Attendu : Retry exponentiel (max 2).
+Sprint : Performance v1.
+
+P1-PERF-007
+Catégorie : Backend / Normalisation
+Description : Normalisation RDAP/WHOIS lente (string ops).
+Sprint : Performance v1.
+
+P1-PERF-008
+Catégorie : Frontend / DataGrid
+Description : Le DataGrid freeze avec 200+ résultats.
+Reproduction : Coller un log massif.
+Observé : UI non réactive.
+Attendu : Virtualisation des lignes.
+Sprint : Performance v2.
+
+P1-PERF-009
+Catégorie : Frontend / Rendering
+Description : Trop de re-renders React lors de l’analyse.
+Sprint : Performance v2.
+
+
+===========================================================
+P2 — CRITICITÉ MAJEUR
+===========================================================
+
+P2-PERF-010
+Catégorie : Backend / DNS
+Description : Résolution DNS non parallélisée.
+Sprint : Performance v1.
+
+P2-PERF-011
+Catégorie : Backend / WHOIS
+Description : Parsing WHOIS lent sur certains registrars.
+Sprint : Performance v2.
+
+P2-PERF-012
+Catégorie : Backend / RDAP
+Description : Certains endpoints RDAP sont très lents.
+Attendu : Timeout + fallback + cache.
+Sprint : Performance v1.
+
+P2-PERF-013
+Catégorie : Frontend / Rendering
+Description : Autosize DataGrid coûteux en CPU.
+Sprint : Performance v2.
+
+P2-PERF-014
+Catégorie : Frontend / Layout
+Description : Calcul du layout trop fréquent.
+Sprint : Performance v2.
+
+
+===========================================================
+P3 — CRITICITÉ MINEUR / POLISH
+===========================================================
+
+P3-PERF-015
+Catégorie : Backend / Logs
+Description : Logs non structurés (pas JSON).
+Sprint : Performance polish.
+
+P3-PERF-016
+Catégorie : Backend / Metrics
+Description : Pas de métriques (latence, taux d’erreur).
+Sprint : Performance polish.
+
+P3-PERF-017
+Catégorie : Frontend / UI
+Description : Animation DataGrid non optimisée.
+Sprint : Performance polish.
+
+P3-PERF-018
+Catégorie : Backend / Cache
+Description : TTL configurable manquant.
+Sprint : Performance polish.
+
+
+===========================================================
+SPÉCIFICATIONS PERFORMANCE (HORS PARSER)
+===========================================================
+
+1. Parallélisation
+- RDAP en parallèle
+- WHOIS en parallèle
+- DNS en parallèle
+- join_all obligatoire
+
+2. Caching
+- cache local (HashMap + TTL)
+- clé = IP ou hostname
+- TTL configurable (1h par défaut)
+- invalidation propre
+
+3. Batching
+- DNS batch
+- WHOIS batch (optionnel)
+- RDAP batch (si possible)
+
+4. Timeouts
+- timeout global (5s)
+- timeout DNS (2s)
+- timeout WHOIS (3s)
+- timeout RDAP (3s)
+
+5. Retry intelligent
+- retry exponentiel
+- max 2 tentatives
+- logs en cas d’échec
+
+6. Logs structurés
+- format JSON
+- niveau (info, warn, error)
+- latence par requête
+
+7. Metrics
+- latence RDAP
+- latence WHOIS
+- latence DNS
+- taux d’erreur
+- taux de fallback
+
+8. Frontend
+- virtualisation DataGrid
+- réduction des re-renders
+- optimisation autosize
+- optimisation layout
+
+
+===========================================================
+TESTS QA PERFORMANCE
+===========================================================
+
+Tests Backend
+- 1 IP
+- 10 IPs
+- 100 IPs
+- endpoints lents
+- endpoints down
+- DNS massif
+- WHOIS massif
+
+Tests Frontend
+- 200 résultats
+- 500 résultats
+- scroll rapide
+- resize fenêtre
+- dark mode
+
+Tests Caching
+- même IP 2x
+- TTL expiré
+- TTL non expiré
+
+Tests Timeout
+- RDAP lent
+- WHOIS lent
+- DNS lent
+
+Tests Retry
+- échec ponctuel
+- échec permanent
+
+
+===========================================================
+DÉPENDANCES
+===========================================================
+
+D1 — Dépend du backend RDAP/WHOIS/DNS
+- normalisation
+- fallback
+- erreurs réseau
+
+D2 — Dépend du parser v2
+- extraction correcte
+- validation globale
+
+D3 — Dépend du DataGrid
+- virtualisation
+- autosize
+- rendering
+
+
+===========================================================
+FIN DU DOCUMENT
+===========================================================

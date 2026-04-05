@@ -1,0 +1,170 @@
+# AtlasIP — Roadmap (v1.0)
+Author: Absol3m
+Language: English
+Scope: Development roadmap for AtlasIP backend, frontend, UI, and future extensions.
+
+--------------------------------------------------
+1. Vision
+--------------------------------------------------
+AtlasIP aims to become the modern, open-source successor to IPNetInfo:
+- Fast, reliable IP OSINT tool
+- Modern Rust backend (DNS + RDAP + WHOIS)
+- Clean, efficient frontend
+- Extensible architecture (UI, CLI, browser extension)
+- Professional-grade UX for analysts, SOC teams, CERTs, and researchers
+
+The roadmap is divided into incremental sprints, each delivering a stable,
+testable milestone.
+
+--------------------------------------------------
+2. Current Phase
+--------------------------------------------------
+Backend foundation completed:
+- DNS + RDAP + WHOIS pipeline
+- Local API
+- Configuration system
+- CLI
+- Export formats
+- Proxy support
+
+Frontend foundation in progress:
+- Layout
+- Analysis page
+- DataGrid
+- IP detail page
+
+--------------------------------------------------
+3. Sprint Breakdown
+--------------------------------------------------
+
+--------------------------------------------------
+Sprint 2.1 — DataGrid Foundation
+--------------------------------------------------
+Status: In progress
+
+Goals:
+- Implement DataGrid component
+- Column resizing
+- Column visibility
+- Column reordering
+- Auto-size on double-click
+- Virtualized rendering
+- Basic sorting
+- Persist user preferences
+
+Deliverables:
+- Fully functional DataGrid
+- Integrated with analysis page
+- Ready for interactive workflows
+
+--------------------------------------------------
+Sprint 2.2 — Analysis Page (Full Workflow)
+--------------------------------------------------
+Status: Planned
+
+Goals:
+- Implement smart input field
+- Auto-detection of IPs, hostnames, email headers
+- Input cleaning + dedupe
+- Bulk lookup integration
+- Add IP directly from DataGrid
+- Editable IP column
+- Unified “Analyze” workflow
+- Error handling (inline + toast)
+- Placeholders for all states
+
+Deliverables:
+- Complete analysis workflow
+- Production-ready UX
+
+--------------------------------------------------
+Sprint 3 — IP Detail Page
+--------------------------------------------------
+Status: Planned
+
+Goals:
+- Implement /ip/<ip> route
+- Summary card
+- Organization section
+- Network section
+- Contacts section
+- DNS section
+- Raw WHOIS panel
+- Export (HTML, TXT, raw WHOIS)
+- Back navigation preserving state
+
+Deliverables:
+- Fully functional IP detail view
+- Export-ready
+
+--------------------------------------------------
+Sprint 4 — Settings Page
+--------------------------------------------------
+Status: Planned
+
+Goals:
+- UI for config.toml
+- Proxy configuration
+- Timeout settings
+- Theme selection
+- Language selection
+- Auto-retry options
+- Persist settings to backend
+
+Deliverables:
+- Complete settings UI
+- Full backend integration
+
+--------------------------------------------------
+Sprint 5 — Polish & Stability
+--------------------------------------------------
+Status: Planned
+
+Goals:
+- UI refinements
+- Improved error messages
+- Faster input parsing
+- Better table performance
+- Accessibility improvements
+- Keyboard shortcuts
+- Dark mode polish
+
+Deliverables:
+- Stable v1.0 release candidate
+
+--------------------------------------------------
+4. Future Milestones
+--------------------------------------------------
+
+### 4.1. Browser Extension
+- Retrieve current site IP
+- Call local API
+- Display owner / country / abuse contacts
+- Quick actions (copy, export)
+
+### 4.2. Tauri Desktop App
+- Native window
+- System tray
+- File import (CSV, TXT)
+- Offline mode (cached lookups)
+
+### 4.3. Advanced Features
+- ASN lookup
+- Threat intelligence integration
+- IP reputation scoring
+- WHOIS diff between lookups
+- Timeline of ownership changes
+- Saved IP lists
+- Session history
+
+--------------------------------------------------
+5. Long-Term Vision
+--------------------------------------------------
+AtlasIP becomes:
+- A reference OSINT tool for IP analysis
+- A modern alternative to legacy WHOIS tools
+- A platform extensible by the community
+- A clean, well-documented open-source project
+
+The roadmap evolves as the project grows, but the core principles remain:
+clarity, performance, reliability, and a professional UX.

@@ -119,10 +119,13 @@ fn extract_cidr(json: &Value) -> Option<String> {
 
 /// Walk the `events` array and return the date of the first event whose
 /// `eventAction` matches `action` (e.g. `"registration"`).
+/// The date is normalised to ISO 8601 (P1-RDAP-004).
 fn extract_event_date(json: &Value, action: &str) -> Option<String> {
     json["events"].as_array()?.iter().find_map(|ev| {
         if ev["eventAction"].as_str()? == action {
-            ev["eventDate"].as_str().map(str::to_owned)
+            ev["eventDate"]
+                .as_str()
+                .map(|d| crate::utils::normalize_date(d))
         } else {
             None
         }
@@ -220,14 +223,23 @@ fn extract_country_from_vcard(entity: &Value) -> Option<String> {
 
 /// Parse the vCard of a single entity and merge relevant fields into `parsed`
 /// according to the entity's `roles`.
+///
+/// Handles roles: `registrant`, `org` (P0-RDAP-001 — APNIC/AFRINIC), `abuse`,
+/// `administrative`, `technical` (fallback contacts).
 fn process_entity(entity: &Value, parsed: &mut ParsedRdap) {
     let roles: Vec<&str> = entity["roles"]
         .as_array()
         .map(|arr| arr.iter().filter_map(|r| r.as_str()).collect())
         .unwrap_or_default();
 
-    let is_registrant = roles.contains(&"registrant");
-    let is_abuse = roles.contains(&"abuse");
+    let is_registrant   = roles.contains(&"registrant");
+    // `org` role: used by APNIC/AFRINIC as the network owner entity.
+    // Treated identically to `registrant` but at lower priority (get_or_insert
+    // semantics rather than unconditional overwrite).
+    let is_org          = roles.contains(&"org");
+    let is_abuse        = roles.contains(&"abuse");
+    // administrative / technical are secondary contact roles.
+    let is_secondary    = roles.contains(&"administrative") || roles.contains(&"technical");
 
     let mut name: Option<String> = None;
     let mut address: Option<String> = None;
@@ -243,7 +255,7 @@ fn process_entity(entity: &Value, parsed: &mut ParsedRdap) {
                 name = vcard_text(prop).map(str::to_owned);
             }
             Some("org") => {
-                // Use org as name if fn is not available.
+                // Use vCard `org` as the entity name if `fn` is absent.
                 if name.is_none() {
                     name = vcard_text(prop).map(str::to_owned);
                 }
@@ -274,21 +286,48 @@ fn process_entity(entity: &Value, parsed: &mut ParsedRdap) {
         }
     }
 
-    // Merge into parsed based on roles.
+    // ── registrant role — highest priority ───────────────────────────────────
     if is_registrant {
+        // Unconditional first-wins: registrant always beats org/secondary.
         parsed.owner_name = parsed.owner_name.take().or(name.clone());
-        parsed.address = parsed.address.take().or(address.clone());
+        parsed.address    = parsed.address.take().or(address.clone());
         parsed.postal_code = parsed.postal_code.take().or(postal_code.clone());
         parsed.emails.extend(emails.clone());
         parsed.phone = parsed.phone.take().or(phone.clone());
-        parsed.fax = parsed.fax.take().or(fax.clone());
-        // Fallback: extract country code from the last field of the adr vCard
-        // when the top-level `country` field is absent (e.g. ARIN responses).
+        parsed.fax   = parsed.fax.take().or(fax.clone());
+        // Fallback: country from vCard adr (ARIN omits top-level country).
         if parsed.country.is_none() {
             parsed.country = extract_country_from_vcard(entity);
         }
     }
 
+    // ── org role — lower priority than registrant (P0-RDAP-001) ─────────────
+    if is_org && !is_registrant {
+        // Only fill fields that are still empty — registrant wins.
+        parsed.owner_name.get_or_insert_with(|| name.clone().unwrap_or_default());
+        if parsed.owner_name.as_deref() == Some("") {
+            parsed.owner_name = name.clone();
+        }
+        if parsed.address.is_none() {
+            parsed.address = address.clone();
+        }
+        if parsed.postal_code.is_none() {
+            parsed.postal_code = postal_code.clone();
+        }
+        if parsed.phone.is_none() {
+            parsed.phone = phone.clone();
+        }
+        if parsed.fax.is_none() {
+            parsed.fax = fax.clone();
+        }
+        parsed.emails.extend(emails.clone());
+        // Country fallback from org entity vCard.
+        if parsed.country.is_none() {
+            parsed.country = extract_country_from_vcard(entity);
+        }
+    }
+
+    // ── abuse role ────────────────────────────────────────────────────────────
     if is_abuse {
         parsed.abuse_emails.extend(emails.clone());
         parsed.abuse_contact = parsed.abuse_contact.take().or(name.clone());
@@ -298,17 +337,25 @@ fn process_entity(entity: &Value, parsed: &mut ParsedRdap) {
         }
     }
 
-    // contact_name: first non-registrant named entity.
-    if !is_registrant && parsed.contact_name.is_none() {
+    // ── administrative / technical — secondary contacts ───────────────────────
+    if is_secondary {
+        // These are secondary contacts; only fill contact_name if still unset.
+        if parsed.contact_name.is_none() {
+            parsed.contact_name = name.clone();
+        }
+    }
+
+    // ── Fallback contact_name for any non-owner, non-abuse named entity ───────
+    if !is_registrant && !is_org && !is_abuse && parsed.contact_name.is_none() {
         parsed.contact_name = name.clone();
     }
 
-    // Postal code: fill if still missing.
+    // ── Postal code: fill if still missing ───────────────────────────────────
     if parsed.postal_code.is_none() {
         parsed.postal_code = postal_code;
     }
 
-    // Recurse into nested entities (e.g. an org entity containing people).
+    // ── Recurse into nested entities (e.g. org entity containing people) ─────
     if let Some(sub_entities) = entity["entities"].as_array() {
         for sub in sub_entities {
             process_entity(sub, parsed);
@@ -613,6 +660,120 @@ mod tests {
         assert_eq!(p.phone.as_deref(), Some("+1-650-253-0000"));
         assert!(p.abuse_emails.contains(&"network-abuse@google.com".to_owned()));
         assert_eq!(p.abuse_contact.as_deref(), Some("Google LLC - Abuse"));
+    }
+
+    // --- org role / date normalization tests ---
+
+    #[test]
+    fn test_parse_org_role_entity() {
+        // APNIC / AFRINIC often use an `org` role entity instead of `registrant`.
+        let json = serde_json::json!({
+            "objectClassName": "ip network",
+            "name": "APNIC-NET",
+            "country": "AU",
+            "startAddress": "1.1.1.0",
+            "endAddress": "1.1.1.255",
+            "cidr0_cidrs": [{"v4prefix": "1.1.1.0", "length": 24}],
+            "status": ["active"],
+            "events": [
+                {"eventAction": "registration", "eventDate": "2011-08-11"}
+            ],
+            "entities": [
+                {
+                    "roles": ["org"],
+                    "vcardArray": ["vcard", [
+                        ["version", {}, "text", "4.0"],
+                        ["fn", {}, "text", "APNIC Pty Ltd"],
+                        ["adr", {}, "text",
+                         ["", "", "6 Cordelia St", "South Brisbane", "QLD", "4101", "AU"]],
+                        ["email", {}, "text", "helpdesk@apnic.net"]
+                    ]]
+                },
+                {
+                    "roles": ["abuse"],
+                    "vcardArray": ["vcard", [
+                        ["version", {}, "text", "4.0"],
+                        ["fn", {}, "text", "IRT-APNICRANDNET-AU"],
+                        ["email", {}, "text", "abuse@apnic.net"]
+                    ]]
+                }
+            ]
+        });
+
+        let p = RdapClient::parse(&json);
+
+        assert_eq!(p.country.as_deref(), Some("AU"));
+        assert_eq!(p.owner_name.as_deref(), Some("APNIC Pty Ltd"));
+        assert!(p.emails.contains(&"helpdesk@apnic.net".to_owned()));
+        assert!(p.abuse_emails.contains(&"abuse@apnic.net".to_owned()));
+        assert_eq!(p.abuse_contact.as_deref(), Some("IRT-APNICRANDNET-AU"));
+        // Date should be normalised from YYYY-MM-DD to ISO 8601.
+        assert_eq!(p.allocated.as_deref(), Some("2011-08-11T00:00:00Z"));
+    }
+
+    #[test]
+    fn test_parse_date_already_iso8601() {
+        let json = serde_json::json!({
+            "events": [
+                {"eventAction": "registration", "eventDate": "1992-04-30T00:00:00Z"}
+            ],
+            "entities": []
+        });
+        let p = RdapClient::parse(&json);
+        assert_eq!(p.allocated.as_deref(), Some("1992-04-30T00:00:00Z"));
+    }
+
+    #[test]
+    fn test_registrant_wins_over_org() {
+        // When both `registrant` and `org` entities are present in document
+        // order (registrant first, as is standard in ARIN/RIPE responses),
+        // the registrant name is used.
+        let json = serde_json::json!({
+            "entities": [
+                {
+                    "roles": ["registrant"],
+                    "vcardArray": ["vcard", [
+                        ["version", {}, "text", "4.0"],
+                        ["fn", {}, "text", "Registrant Name"],
+                        ["email", {}, "text", "reg@example.com"]
+                    ]]
+                },
+                {
+                    "roles": ["org"],
+                    "vcardArray": ["vcard", [
+                        ["version", {}, "text", "4.0"],
+                        ["fn", {}, "text", "Org Name"],
+                        ["email", {}, "text", "org@example.com"]
+                    ]]
+                }
+            ]
+        });
+
+        let p = RdapClient::parse(&json);
+        // Registrant is processed first → its name is set; org cannot overwrite.
+        assert_eq!(p.owner_name.as_deref(), Some("Registrant Name"),
+            "registrant entity (first in document) should set owner_name");
+    }
+
+    #[test]
+    fn test_org_only_entity_fills_owner_name() {
+        // When only an `org` entity is present (common for APNIC/AFRINIC),
+        // the org name is used as owner_name.
+        let json = serde_json::json!({
+            "entities": [
+                {
+                    "roles": ["org"],
+                    "vcardArray": ["vcard", [
+                        ["version", {}, "text", "4.0"],
+                        ["fn", {}, "text", "APNIC Pty Ltd"],
+                        ["email", {}, "text", "helpdesk@apnic.net"]
+                    ]]
+                }
+            ]
+        });
+
+        let p = RdapClient::parse(&json);
+        assert_eq!(p.owner_name.as_deref(), Some("APNIC Pty Ltd"));
     }
 
     // --- Integration tests (real network) ---

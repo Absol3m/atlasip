@@ -6,19 +6,29 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use std::sync::Arc;
-use tokio::{sync::RwLock, task::JoinSet};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::{
+    sync::{RwLock, Semaphore},
+    task::JoinSet,
+    time::timeout,
+};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info, warn};
 
 use crate::{
+    cache::LookupCache,
     config::AppConfig,
     dns,
     export::{self, ExportFormat},
+    metrics::RequestMetrics,
     models::{BulkLookupRequest, ConfigUpdateRequest, ExportQuery, IpRecord},
     rdap::{ParsedRdap, RdapClient},
+    retry::retry_async,
     utils,
-    whois::{ParsedWhois, WhoisClient},
+    whois::{enrich_from_whois_raw, ParsedWhois, WhoisClient},
 };
 
 // ---------------------------------------------------------------------------
@@ -34,15 +44,34 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     /// In-memory lookup results, accumulated across all requests.
     pub records: Arc<RwLock<Vec<IpRecord>>>,
+    /// TTL-based lookup cache (P0-PERF-004, P3-PERF-018).
+    pub cache: LookupCache,
+    /// Per-source request metrics (P3-PERF-016).
+    pub metrics: RequestMetrics,
+    /// Semaphore that caps concurrent lookups to `max_concurrent_lookups`
+    /// (P2-PERF-011).
+    pub semaphore: Arc<Semaphore>,
 }
 
 impl AppState {
     /// Create a new `AppState` starting with default configuration.
-    /// Once `AppConfig::load()` is implemented, call it here.
     pub fn new() -> Self {
+        Self::with_config(AppConfig::default())
+    }
+
+    /// Create a new `AppState` seeded with the supplied `config`.
+    ///
+    /// The cache TTL and semaphore capacity are derived from the config so
+    /// they stay consistent even when a custom config is provided.
+    pub fn with_config(config: AppConfig) -> Self {
+        let cache_ttl    = Duration::from_secs(config.cache_ttl_secs);
+        let max_parallel = config.max_concurrent_lookups as usize;
         Self {
-            config: Arc::new(RwLock::new(AppConfig::default())),
-            records: Arc::new(RwLock::new(Vec::new())),
+            cache:     LookupCache::new(cache_ttl),
+            metrics:   RequestMetrics::new(),
+            semaphore: Arc::new(Semaphore::new(max_parallel)),
+            config:    Arc::new(RwLock::new(config)),
+            records:   Arc::new(RwLock::new(Vec::new())),
         }
     }
 }
@@ -80,12 +109,13 @@ pub fn build_router(state: AppState) -> Router {
         .allow_origin(Any);
 
     Router::new()
-        .route("/health",               get(health))
-        .route("/lookup/ip/:ip",        get(lookup_ip))
+        .route("/health",                get(health))
+        .route("/lookup/ip/:ip",         get(lookup_ip))
         .route("/lookup/hostname/:host", get(lookup_hostname))
-        .route("/lookup/bulk",          post(lookup_bulk))
-        .route("/export",               get(export_records))
-        .route("/config",               get(get_config).post(update_config))
+        .route("/lookup/bulk",           post(lookup_bulk))
+        .route("/export",                get(export_records))
+        .route("/config",                get(get_config).post(update_config))
+        .route("/metrics",               get(get_metrics))
         .layer(cors)
         .with_state(state)
 }
@@ -96,92 +126,215 @@ pub fn build_router(state: AppState) -> Router {
 
 /// Run the full lookup pipeline for a single `target` (IP or hostname).
 ///
-/// Steps:
-/// 1. If `target` is a hostname, resolve it to an IP via DNS.
-/// 2. Perform a reverse PTR lookup on the resolved IP.
-/// 3. Try RDAP (priority). On any failure, fall back to WHOIS.
-/// 4. Return a populated `IpRecord`.
+/// A hard global deadline (`config.global_timeout_ms`) wraps the entire
+/// pipeline (P0-PERF-001).  Individual steps use `retry_async` when
+/// `config.auto_retry_failed` is `true` (P1-PERF-006).
 ///
 /// Exposed as `pub(crate)` so `cli.rs` can reuse the same pipeline.
-pub(crate) async fn perform_lookup(order: u32, target: &str, config: &AppConfig) -> IpRecord {
+pub(crate) async fn perform_lookup(
+    order:   u32,
+    target:  &str,
+    config:  &AppConfig,
+    cache:   &LookupCache,
+    metrics: &RequestMetrics,
+) -> IpRecord {
+    match timeout(
+        Duration::from_millis(config.global_timeout_ms),
+        perform_lookup_inner(order, target, config, cache, metrics),
+    )
+    .await
+    {
+        Ok(record) => record,
+        Err(_) => {
+            let mut rec = IpRecord::new(order, target);
+            error!(
+                target: "atlasip::lookup",
+                %target,
+                timeout_ms = config.global_timeout_ms,
+                "global lookup timeout exceeded"
+            );
+            rec.lookup_errors.push(format!(
+                "Global lookup timeout ({} ms) exceeded",
+                config.global_timeout_ms
+            ));
+            rec
+        }
+    }
+}
+
+/// Inner pipeline — no global timeout (handled by the caller).
+async fn perform_lookup_inner(
+    order:   u32,
+    target:  &str,
+    config:  &AppConfig,
+    cache:   &LookupCache,
+    metrics: &RequestMetrics,
+) -> IpRecord {
+    // ── Cache check (P0-PERF-004) ────────────────────────────────────────────
+    if let Some(mut cached) = cache.get(target).await {
+        metrics.record_cache_hit();
+        // Update order so bulk-lookup sort remains deterministic.
+        cached.order = order;
+        info!(target: "atlasip::cache", %target, "serving from cache");
+        return cached;
+    }
+
     let mut record = IpRecord::new(order, target);
 
-    // ── Step 1: hostname resolution ─────────────────────────────────────────
+    // ── Step 1: DNS ─────────────────────────────────────────────────────────
+    let dns_start = Instant::now();
+
     let ip: String = if utils::is_ip(target) {
-        // The target itself is an IP; record it and move on.
+        record.ip = target.to_owned();
+        // PTR is non-blocking; failure is recorded but does not abort.
+        let dns_ok = match dns::reverse_lookup(target, config.dns_timeout_ms).await {
+            Ok(Some(ptr)) => {
+                record.resolved_name = Some(ptr);
+                true
+            }
+            Ok(None) => true,
+            Err(e) => {
+                record.lookup_errors.push(format!("PTR: {e}"));
+                false
+            }
+        };
+        metrics.record_dns(dns_start.elapsed().as_micros() as u64, dns_ok);
         target.to_owned()
     } else {
-        // Remember the original hostname.
         record.host_name = Some(target.to_owned());
-        match dns::resolve_hostname(target, config.dns_timeout_ms).await {
-            Ok(ip) => {
+        let dns_result = dns::full_dns_lookup(target, config.dns_timeout_ms).await;
+
+        // Propagate DNS records (A, AAAA, CNAME, TXT with TTL).
+        record.dns_records = dns_result.records;
+        if let Some(ptr) = dns_result.ptr {
+            record.resolved_name = Some(ptr);
+        }
+        for e in dns_result.errors {
+            record.lookup_errors.push(e);
+        }
+
+        match dns_result.resolved_ip {
+            Some(ip) => {
+                metrics.record_dns(dns_start.elapsed().as_micros() as u64, true);
                 record.ip = ip.clone();
                 ip
             }
-            Err(e) => {
-                let msg = format!("DNS forward lookup failed: {e}");
-                warn!("{msg}");
+            None => {
+                metrics.record_dns(dns_start.elapsed().as_micros() as u64, false);
+                let msg = "DNS: no A/AAAA record resolved".to_owned();
+                warn!("{msg} for {target}");
                 record.lookup_errors.push(msg);
-                return record;
+                return record; // No IP resolved — nothing more to do, don't cache.
             }
         }
     };
 
-    // ── Step 2: reverse PTR lookup ──────────────────────────────────────────
-    match dns::reverse_lookup(&ip, config.dns_timeout_ms).await {
-        Ok(Some(ptr)) => {
-            record.resolved_name = Some(ptr);
-        }
-        Ok(None) => {}
-        Err(e) => {
-            // PTR failure is non-fatal.
-            record.lookup_errors.push(format!("DNS reverse lookup: {e}"));
-        }
-    }
+    // ── Steps 2 + 3: RDAP and WHOIS run in parallel ──────────────────────────
+    //
+    // RDAP is the primary source (spec §2.1).
+    // WHOIS always runs alongside to provide enrichment:
+    //   • RDAP ok  → WHOIS brut fills empty fields (*_enriched flags).
+    //   • RDAP fail → WHOIS becomes primary source (no enrichment flags).
+    let max_retries = if config.auto_retry_failed { 2 } else { 0 };
 
-    // ── Step 3: RDAP (priority) ─────────────────────────────────────────────
-    let rdap_ok = match RdapClient::new(config.rdap_timeout_ms) {
-        Ok(client) => match client.query(&ip).await {
-            Ok(result) => {
-                info!("RDAP success for {ip} via {}", result.url);
-                let parsed = RdapClient::parse(&result.json);
-                record.raw_rdap = Some(result.json);
-                record.whois_source = Some("RDAP".to_owned());
-                apply_rdap(&mut record, parsed);
-                true
-            }
-            Err(e) => {
-                let msg = format!("RDAP query failed: {e}");
-                warn!("{msg}");
-                record.lookup_errors.push(msg);
-                false
-            }
-        },
+    let rdap_metrics = metrics.clone();
+    let rdap_future = {
+        let ip_clone = ip.clone();
+        let cfg      = config.clone();
+        async move {
+            let start = Instant::now();
+            let result: Result<_, anyhow::Error> = retry_async(
+                "RDAP",
+                max_retries,
+                Duration::from_millis(200),
+                || {
+                    let ip  = ip_clone.clone();
+                    let cfg = cfg.clone();
+                    async move {
+                        let client = RdapClient::new(cfg.rdap_timeout_ms)
+                            .map_err(|e| anyhow::anyhow!("RDAP client init: {e}"))?;
+                        client.query(&ip).await.map_err(|e| anyhow::anyhow!("{e}"))
+                    }
+                },
+            )
+            .await;
+            rdap_metrics.record_rdap(start.elapsed().as_micros() as u64, result.is_ok());
+            result
+        }
+    };
+
+    let whois_metrics = metrics.clone();
+    let whois_future = {
+        let ip_clone = ip.clone();
+        let cfg      = config.clone();
+        async move {
+            let start = Instant::now();
+            let result: Result<_, anyhow::Error> = retry_async(
+                "WHOIS",
+                max_retries,
+                Duration::from_millis(200),
+                || {
+                    let ip  = ip_clone.clone();
+                    let cfg = cfg.clone();
+                    async move {
+                        let client = WhoisClient::new(cfg.whois_timeout_ms);
+                        client.query(&ip).await.map_err(|e| anyhow::anyhow!("{e}"))
+                    }
+                },
+            )
+            .await;
+            whois_metrics.record_whois(start.elapsed().as_micros() as u64, result.is_ok());
+            result
+        }
+    };
+
+    let (rdap_result, whois_result) = tokio::join!(rdap_future, whois_future);
+
+    let rdap_ok = match rdap_result {
+        Ok(rdap) => {
+            info!(target: "atlasip::rdap", %ip, url = %rdap.url, "RDAP ok");
+            let parsed = RdapClient::parse(&rdap.json);
+            record.raw_rdap     = Some(rdap.json);
+            record.whois_source = Some("RDAP".to_owned());
+            apply_rdap(&mut record, parsed);
+            true
+        }
         Err(e) => {
-            let msg = format!("RDAP client init failed: {e}");
-            error!("{msg}");
+            let msg = format!("RDAP: {e}");
+            warn!("{msg}");
             record.lookup_errors.push(msg);
             false
         }
     };
 
-    // ── Step 4: WHOIS fallback ──────────────────────────────────────────────
-    if !rdap_ok {
-        let client = WhoisClient::new(config.whois_timeout_ms);
-        match client.query(&ip).await {
-            Ok(result) => {
-                info!("WHOIS success for {ip} via {}", result.server);
-                record.whois_source = Some(result.server.clone());
-                let parsed = WhoisClient::parse(&result.raw);
-                record.raw_whois = Some(result.raw);
+    match whois_result {
+        Ok(whois) => {
+            info!(target: "atlasip::whois", %ip, server = %whois.server, "WHOIS ok");
+            record.raw_whois = Some(whois.raw.clone());
+            if rdap_ok {
+                // RDAP already populated the record — use WHOIS brut only to
+                // fill empty fields and set *_enriched flags (spec R1–R3).
+                enrich_from_whois_raw(&mut record, &whois.raw);
+            } else {
+                // RDAP failed: WHOIS is the primary source; no enrichment flags.
+                metrics.record_fallback();
+                record.whois_source = Some(whois.server);
+                let parsed = WhoisClient::parse(&whois.raw);
                 apply_whois(&mut record, parsed);
             }
-            Err(e) => {
-                let msg = format!("WHOIS query failed: {e}");
-                error!("{msg}");
-                record.lookup_errors.push(msg);
-            }
         }
+        Err(e) => {
+            let msg = format!("WHOIS: {e}");
+            // Demote to warn when RDAP already succeeded; otherwise error.
+            if rdap_ok { warn!("{msg}"); } else { error!("{msg}"); }
+            record.lookup_errors.push(msg);
+        }
+    }
+
+    // ── Cache insert (P0-PERF-004) ───────────────────────────────────────────
+    // Only cache when at least one network source returned data.
+    if rdap_ok || record.raw_whois.is_some() {
+        cache.insert(target, record.clone()).await;
     }
 
     record
@@ -190,19 +343,19 @@ pub(crate) async fn perform_lookup(order: u32, target: &str, config: &AppConfig)
 /// Merge parsed RDAP fields into an `IpRecord`.
 /// Fields already set on the record are left unchanged (first-wins).
 fn apply_rdap(rec: &mut IpRecord, p: ParsedRdap) {
-    fill_opt(&mut rec.country,      p.country);
-    fill_opt(&mut rec.owner_name,   p.owner_name);
-    fill_opt(&mut rec.address,      p.address);
-    fill_opt(&mut rec.phone,        p.phone);
-    fill_opt(&mut rec.fax,          p.fax);
-    fill_opt(&mut rec.from_ip,      p.from_ip);
-    fill_opt(&mut rec.to_ip,        p.to_ip);
-    fill_opt(&mut rec.status,       p.status);
-    fill_opt(&mut rec.network_name, p.network_name);
-    fill_opt(&mut rec.contact_name, p.contact_name);
-    fill_opt(&mut rec.allocated,    p.allocated);
-    fill_opt(&mut rec.cidr,         p.cidr);
-    fill_opt(&mut rec.postal_code,  p.postal_code);
+    fill_opt(&mut rec.country,       p.country);
+    fill_opt(&mut rec.owner_name,    p.owner_name);
+    fill_opt(&mut rec.address,       p.address);
+    fill_opt(&mut rec.phone,         p.phone);
+    fill_opt(&mut rec.fax,           p.fax);
+    fill_opt(&mut rec.from_ip,       p.from_ip);
+    fill_opt(&mut rec.to_ip,         p.to_ip);
+    fill_opt(&mut rec.status,        p.status);
+    fill_opt(&mut rec.network_name,  p.network_name);
+    fill_opt(&mut rec.contact_name,  p.contact_name);
+    fill_opt(&mut rec.allocated,     p.allocated);
+    fill_opt(&mut rec.cidr,          p.cidr);
+    fill_opt(&mut rec.postal_code,   p.postal_code);
     fill_opt(&mut rec.abuse_contact, p.abuse_contact);
     extend_unique(&mut rec.emails,       p.emails);
     extend_unique(&mut rec.abuse_emails, p.abuse_emails);
@@ -210,19 +363,19 @@ fn apply_rdap(rec: &mut IpRecord, p: ParsedRdap) {
 
 /// Merge parsed WHOIS fields into an `IpRecord`.
 fn apply_whois(rec: &mut IpRecord, p: ParsedWhois) {
-    fill_opt(&mut rec.country,      p.country);
-    fill_opt(&mut rec.owner_name,   p.owner_name);
-    fill_opt(&mut rec.address,      p.address);
-    fill_opt(&mut rec.phone,        p.phone);
-    fill_opt(&mut rec.fax,          p.fax);
-    fill_opt(&mut rec.from_ip,      p.from_ip);
-    fill_opt(&mut rec.to_ip,        p.to_ip);
-    fill_opt(&mut rec.status,       p.status);
-    fill_opt(&mut rec.network_name, p.network_name);
-    fill_opt(&mut rec.contact_name, p.contact_name);
-    fill_opt(&mut rec.allocated,    p.allocated);
-    fill_opt(&mut rec.cidr,         p.cidr);
-    fill_opt(&mut rec.postal_code,  p.postal_code);
+    fill_opt(&mut rec.country,       p.country);
+    fill_opt(&mut rec.owner_name,    p.owner_name);
+    fill_opt(&mut rec.address,       p.address);
+    fill_opt(&mut rec.phone,         p.phone);
+    fill_opt(&mut rec.fax,           p.fax);
+    fill_opt(&mut rec.from_ip,       p.from_ip);
+    fill_opt(&mut rec.to_ip,         p.to_ip);
+    fill_opt(&mut rec.status,        p.status);
+    fill_opt(&mut rec.network_name,  p.network_name);
+    fill_opt(&mut rec.contact_name,  p.contact_name);
+    fill_opt(&mut rec.allocated,     p.allocated);
+    fill_opt(&mut rec.cidr,          p.cidr);
+    fill_opt(&mut rec.postal_code,   p.postal_code);
     fill_opt(&mut rec.abuse_contact, p.abuse_contact);
     extend_unique(&mut rec.emails,       p.emails);
     extend_unique(&mut rec.abuse_emails, p.abuse_emails);
@@ -267,7 +420,9 @@ async fn lookup_ip(
         records.len() as u32 + 1
     };
 
-    let record = perform_lookup(order, &ip, &config).await;
+    let _permit = state.semaphore.acquire().await.unwrap();
+    let record = perform_lookup(order, &ip, &config, &state.cache, &state.metrics).await;
+    drop(_permit);
 
     state.records.write().await.push(record.clone());
     info!("Lookup complete for {ip}: {} errors", record.lookup_errors.len());
@@ -305,7 +460,9 @@ async fn lookup_hostname(
         records.len() as u32 + 1
     };
 
-    let record = perform_lookup(order, &host, &config).await;
+    let _permit = state.semaphore.acquire().await.unwrap();
+    let record = perform_lookup(order, &host, &config, &state.cache, &state.metrics).await;
+    drop(_permit);
 
     state.records.write().await.push(record.clone());
     info!("Lookup complete for {host}: {} errors", record.lookup_errors.len());
@@ -315,7 +472,8 @@ async fn lookup_hostname(
 
 /// POST /lookup/bulk — body: `{ "targets": [...] }` (spec §2.6)
 ///
-/// Runs all lookups concurrently via `tokio::task::JoinSet`.
+/// Runs all lookups concurrently via `tokio::task::JoinSet`, bounded by the
+/// semaphore in `AppState` (P2-PERF-011).
 /// Results are sorted by their original input order.
 async fn lookup_bulk(
     State(state): State<AppState>,
@@ -332,18 +490,28 @@ async fn lookup_bulk(
         records.len() as u32
     };
 
+    let sem     = Arc::clone(&state.semaphore);
+    let cache   = state.cache.clone();
+    let metrics = state.metrics.clone();
+
     let mut set: JoinSet<IpRecord> = JoinSet::new();
     for (i, target) in targets.into_iter().enumerate() {
-        let cfg = config.clone();
-        let order = base_order + i as u32 + 1;
-        set.spawn(async move { perform_lookup(order, &target, &cfg).await });
+        let cfg     = config.clone();
+        let cache   = cache.clone();
+        let metrics = metrics.clone();
+        let sem     = Arc::clone(&sem);
+        let order   = base_order + i as u32 + 1;
+        set.spawn(async move {
+            let _permit = sem.acquire().await.unwrap();
+            perform_lookup(order, &target, &cfg, &cache, &metrics).await
+        });
     }
 
     let mut results: Vec<IpRecord> = Vec::new();
     while let Some(res) = set.join_next().await {
         match res {
             Ok(record) => results.push(record),
-            Err(e) => error!("Bulk lookup task panicked: {e}"),
+            Err(e)     => error!("Bulk lookup task panicked: {e}"),
         }
     }
 
@@ -379,7 +547,7 @@ async fn export_records(
     };
     drop(all_records);
 
-    let config = state.config.read().await.clone();
+    let config  = state.config.read().await.clone();
     let content = export::export(&records, fmt, config.csv_with_header)?;
 
     let content_type = export_content_type(fmt);
@@ -407,19 +575,22 @@ async fn update_config(
 ) -> Result<impl IntoResponse, ApiError> {
     let mut config = state.config.write().await;
 
-    if let Some(v) = body.language            { config.language            = v; }
-    if let Some(v) = body.proxy_type          { config.proxy_type          = v; }
-    if let Some(v) = body.proxy_host          { config.proxy_host          = v; }
-    if let Some(v) = body.proxy_port          { config.proxy_port          = v; }
-    if let Some(v) = body.dns_timeout_ms      { config.dns_timeout_ms      = v; }
-    if let Some(v) = body.whois_timeout_ms    { config.whois_timeout_ms    = v; }
-    if let Some(v) = body.rdap_timeout_ms     { config.rdap_timeout_ms     = v; }
+    if let Some(v) = body.language              { config.language              = v; }
+    if let Some(v) = body.proxy_type            { config.proxy_type            = v; }
+    if let Some(v) = body.proxy_host            { config.proxy_host            = v; }
+    if let Some(v) = body.proxy_port            { config.proxy_port            = v; }
+    if let Some(v) = body.dns_timeout_ms        { config.dns_timeout_ms        = v; }
+    if let Some(v) = body.whois_timeout_ms      { config.whois_timeout_ms      = v; }
+    if let Some(v) = body.rdap_timeout_ms       { config.rdap_timeout_ms       = v; }
     if let Some(v) = body.default_export_format { config.default_export_format = v; }
-    if let Some(v) = body.csv_with_header     { config.csv_with_header     = v; }
-
-    // TODO: persist to disk once AppConfig::save() is implemented.
+    if let Some(v) = body.csv_with_header       { config.csv_with_header       = v; }
 
     Ok(Json(config.clone()))
+}
+
+/// GET /metrics → `MetricsSnapshot` (P3-PERF-016)
+async fn get_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    Json(state.metrics.snapshot())
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +672,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["language"], "fr");
-        assert_eq!(json["dns_timeout_ms"], 3000);
+        assert_eq!(json["dns_timeout_ms"], 2000);
     }
 
     #[tokio::test]
@@ -524,6 +695,27 @@ mod tests {
         assert_eq!(json["dns_timeout_ms"], 1000);
         // Other fields must remain unchanged.
         assert_eq!(json["proxy_type"], "none");
+    }
+
+    // ── /metrics ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_metrics_returns_json() {
+        let app = build_router(test_state());
+        let req = Request::builder().uri("/metrics").body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert!(json["rdap"].is_object(),      "expected rdap object");
+        assert!(json["whois"].is_object(),     "expected whois object");
+        assert!(json["dns"].is_object(),       "expected dns object");
+        assert!(json["fallbacks"].is_number(), "expected fallbacks counter");
+        assert!(json["cache_hits"].is_number(),"expected cache_hits counter");
+        // Fresh state — all counters must be zero.
+        assert_eq!(json["fallbacks"],  0);
+        assert_eq!(json["cache_hits"], 0);
+        assert_eq!(json["rdap"]["requests"], 0);
     }
 
     // ── /lookup/ip ───────────────────────────────────────────────────────────
@@ -653,6 +845,26 @@ mod tests {
         assert!(
             json["error"].as_str().unwrap().contains("private or reserved"),
             "Unexpected error message: {json}"
+        );
+    }
+
+    // ── Global timeout recorded in lookup_errors ─────────────────────────────
+
+    #[tokio::test]
+    async fn test_global_timeout_recorded() {
+        // Build a config with very short timeouts — all steps will fail quickly.
+        let mut config = crate::config::AppConfig::default();
+        config.dns_timeout_ms   = 1;
+        config.rdap_timeout_ms  = 1;
+        config.whois_timeout_ms = 1;
+
+        let cache   = LookupCache::new(Duration::from_secs(3600));
+        let metrics = RequestMetrics::new();
+        let record  = perform_lookup(1, "8.8.8.8", &config, &cache, &metrics).await;
+        // With 1 ms timeouts the pipeline must produce at least one error.
+        assert!(
+            !record.lookup_errors.is_empty(),
+            "Expected lookup errors with 1 ms timeouts, got none"
         );
     }
 
