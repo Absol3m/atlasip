@@ -14,7 +14,7 @@
   const links: NavLink[] = [
     { href: '/lookup',   labelKey: 'nav.analysis', icon: Search,   enabled: true  },
     { href: '/history',  labelKey: 'nav.history',  icon: Clock,    enabled: true  },
-    { href: '/settings', labelKey: 'nav.settings', icon: Settings, enabled: false },
+    { href: '/settings', labelKey: 'nav.settings', icon: Settings, enabled: true  },
     { href: '/about',    labelKey: 'nav.about',    icon: Info,     enabled: false },
   ];
 
@@ -177,11 +177,11 @@
     flex-shrink: 0;
     padding: 4px;
     border: none;
-    border-radius: 5px;
+    border-radius: var(--radius-md);
     background: none;
     color: var(--color-text-muted);
     cursor: pointer;
-    transition: background-color 0.15s, color 0.15s;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
     margin-left: auto;
   }
 
@@ -209,13 +209,13 @@
     align-items: center;
     gap: 10px;
     padding: 8px 10px;
-    border-radius: 7px;
+    border-radius: var(--radius-lg);
     font-size: 13.5px;
     font-weight: 500;
     color: var(--color-text-muted);
     text-decoration: none;
     cursor: pointer;
-    transition: background-color 0.15s, color 0.15s;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
     user-select: none;
     white-space: nowrap;
     overflow: hidden;
@@ -249,7 +249,7 @@
     letter-spacing: 0.06em;
     color: var(--color-text-muted);
     border: 1px solid var(--color-border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 1px 5px;
   }
 
@@ -268,14 +268,14 @@
     gap: 10px;
     width: 100%;
     padding: 8px 10px;
-    border-radius: 7px;
+    border-radius: var(--radius-lg);
     border: none;
     background: none;
     font-size: 13.5px;
     color: var(--color-text-muted);
     cursor: pointer;
     text-align: left;
-    transition: background-color 0.15s, color 0.15s;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
     white-space: nowrap;
     overflow: hidden;
   }

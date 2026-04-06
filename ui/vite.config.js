@@ -11,6 +11,11 @@ export default defineConfig(async () => ({
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
+    // Force Svelte to resolve its browser build instead of the SSR build
+    // so that component tests work correctly in a jsdom/happy-dom environment.
+    resolve: {
+      conditions: ['browser'],
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

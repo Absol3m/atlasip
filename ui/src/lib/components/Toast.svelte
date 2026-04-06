@@ -52,7 +52,7 @@
     align-items: flex-start;
     gap: 10px;
     padding: 10px 14px;
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     font-size: 13px;
     line-height: 1.45;
     border: 1px solid transparent;
@@ -73,13 +73,9 @@
   }
 
   .toast--warning {
-    background: color-mix(in srgb, #f59e0b 12%, var(--color-surface));
-    border-color: #f59e0b;
-    color: #b45309;
-  }
-
-  :global([data-theme='dark']) .toast--warning {
-    color: #fbbf24;
+    background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+    border-color: var(--color-warning);
+    color: var(--color-warning-text);
   }
 
   .toast--error {
