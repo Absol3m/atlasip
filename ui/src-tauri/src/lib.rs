@@ -1,3 +1,21 @@
+pub mod config;
+
+// ── Tauri commands ────────────────────────────────────────────────────────────
+
+/// Return the full application configuration loaded from `config.toml`.
+#[tauri::command]
+fn get_config() -> Result<config::AppConfig, String> {
+    Ok(config::load_config())
+}
+
+/// Persist a new configuration to `config.toml`.
+#[tauri::command]
+fn set_config(config: config::AppConfig) -> Result<(), String> {
+    config::save_config(&config)
+}
+
+// ── App entry point ───────────────────────────────────────────────────────────
+
 /// Tauri shell for AtlasIP.
 ///
 /// The embedded Axum backend is started on a background OS thread with its
@@ -20,7 +38,7 @@ pub fn run() {
     // ── Start the Tauri / WebView shell ─────────────────────────────────────
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![])
+        .invoke_handler(tauri::generate_handler![get_config, set_config])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -245,10 +245,10 @@
     gap: 0;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
     box-shadow: var(--shadow);
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   }
 
   .input-root:focus-within {
@@ -276,7 +276,7 @@
     outline: none;
     background: transparent;
     color: var(--color-text);
-    font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-size: 13px;
     line-height: 1.75;
     resize: none;
@@ -304,11 +304,11 @@
     cursor: pointer;
     color: var(--color-text-muted);
     padding: 4px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: color 0.15s, background-color 0.15s;
+    transition: color var(--transition-fast), background-color var(--transition-fast);
     line-height: 0;
   }
 
@@ -348,7 +348,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
     white-space: nowrap;
     line-height: 1.6;
@@ -363,15 +363,9 @@
 
   /* warning: mixed mode */
   .mode-badge--warning {
-    background: color-mix(in srgb, #f59e0b 12%, transparent);
-    color: #d97706;
-    border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
-  }
-
-  :global([data-theme='dark']) .mode-badge--warning {
-    color: #fbbf24;
-    background: color-mix(in srgb, #f59e0b 15%, transparent);
-    border-color: color-mix(in srgb, #f59e0b 25%, transparent);
+    background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+    color: var(--color-warning-text);
+    border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
   }
 
   /* error: invalid */
@@ -404,13 +398,14 @@
     background: var(--color-accent);
     color: #fff;
     border: none;
-    border-radius: 7px;
+    border-radius: var(--radius-lg);
     font-size: 13.5px;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
-    transition: background-color 0.2s, opacity 0.2s, box-shadow 0.2s, transform 0.1s;
+    transition: background-color var(--transition-base), opacity var(--transition-base),
+                box-shadow var(--transition-base), transform 0.1s ease;
     box-shadow: 0 2px 6px color-mix(in srgb, var(--color-accent) 30%, transparent);
     line-height: 1;
   }
@@ -502,11 +497,11 @@
   }
 
   .invalid-value {
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-size: 11.5px;
     background: color-mix(in srgb, var(--color-error) 12%, transparent);
     padding: 1px 5px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
   }
 
   .invalid-reason {

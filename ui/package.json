@@ -1,5 +1,5 @@
 {
-  "name": "ui",
+  "name": "atlasip",
   "version": "0.3.0-alpha",
   "description": "",
   "type": "module",
@@ -24,7 +24,9 @@
     "@sveltejs/kit": "^2.9.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2",
+    "@testing-library/svelte": "^5.3.1",
     "@types/node": "^25.5.2",
+    "happy-dom": "^20.8.9",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "~5.6.2",

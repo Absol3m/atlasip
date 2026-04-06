@@ -29,6 +29,18 @@
 </div>
 
 <style>
+  /* ── Design tokens — theme-independent ── */
+  :global(:root) {
+    --font-mono:       'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    --radius-sm:       4px;
+    --radius-md:       6px;
+    --radius-lg:       10px;
+    --radius-full:     999px;
+    --shadow-sm:       0 1px 3px rgba(0,0,0,0.06);
+    --transition-fast: 0.15s ease;
+    --transition-base: 0.2s ease;
+  }
+
   /* ── Light theme ── */
   :global([data-theme='light']) {
     --color-bg:           #f3f4f6;
@@ -42,6 +54,8 @@
     --color-hover:        #f3f4f6;
     --color-success:      #16a34a;
     --color-error:        #dc2626;
+    --color-warning:      #f59e0b;
+    --color-warning-text: #b45309;
     --color-card-bg:      #ffffff;
     --color-header-bg:    #f9fafb;
     --color-row-even:     #f9fafb;
@@ -64,6 +78,8 @@
     --color-hover:        #21262d;
     --color-success:      #3fb950;
     --color-error:        #f85149;
+    --color-warning:      #fbbf24;
+    --color-warning-text: #fbbf24;
     --color-card-bg:      #161b22;
     --color-header-bg:    #0d1117;
     --color-row-even:     #0d1117;
