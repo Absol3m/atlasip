@@ -24,6 +24,9 @@ class AnalysisStore {
   /** Workflow status of the analysis request. */
   status = $state<AnalysisStatus>('idle');
 
+  /** When true, the lookup page triggers analyze() on mount. */
+  pendingTrigger = $state(false);
+
   /** Active toast notifications. */
   toasts = $state<Toast[]>([]);
 

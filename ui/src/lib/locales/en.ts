@@ -1,6 +1,6 @@
 const en = {
   'app.title': 'AtlasIP',
-  'app.version': '0.1.0',
+  'app.version': '0.3.0-alpha',
 
   'nav.analysis': 'Analysis',
   'nav.history': 'History',

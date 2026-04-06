@@ -12,9 +12,11 @@ class ResultsStore {
   sortStates = $state<SortState[]>([]);
   pageSize = $state<20 | 50 | 100>(20);
   currentPage = $state(1);
+  scrollTop = 0;
+  scrollLeft = 0;
 
   setResults(records: IpRecord[]) {
-    this.results = records;
+    this.results = records.map((r, i) => ({ ...r, order: i + 1 }));
     this.selected = new Set();
     this.currentPage = 1;
   }

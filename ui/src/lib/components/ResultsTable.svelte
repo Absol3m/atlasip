@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, onDestroy, untrack, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+
   import {
-    Search, Columns3, Download, Copy, MapPin, Eye,
+    Search, Columns3, Download, Copy, Eye,
     ChevronUp, ChevronDown, ChevronsUpDown, X, Braces,
     FileText, Table2, Maximize2,
   } from 'lucide-svelte';
@@ -130,10 +130,23 @@
     saveToStorage();
   }
 
-  // Load persisted widths on mount (before first paint)
-  onMount(() => {
+  let tableWrapper = $state<HTMLDivElement | null>(null);
+
+  onMount(async () => {
     const saved = loadFromStorage();
     Object.assign(columnWidths, saved);
+    await tick();
+    if (tableWrapper) {
+      tableWrapper.scrollTop  = resultsStore.scrollTop;
+      tableWrapper.scrollLeft = resultsStore.scrollLeft;
+    }
+  });
+
+  onDestroy(() => {
+    if (tableWrapper) {
+      resultsStore.scrollTop  = tableWrapper.scrollTop;
+      resultsStore.scrollLeft = tableWrapper.scrollLeft;
+    }
   });
 
   // When results arrive, auto-size any column that has no stored/manual width
@@ -314,12 +327,6 @@
     await navigator.clipboard.writeText(selectedRecords().map(r => r.ip).join('\n'));
   }
 
-  async function openGoogleMaps(record: IpRecord) {
-    const query = [record.address, record.country].filter(Boolean).join(', ');
-    if (!query) return;
-    await openUrl(`https://maps.google.com/?q=${encodeURIComponent(query)}`);
-  }
-
   function hideColumn(key: string) {
     if (key === 'ip') return;
     resultsStore.setVisibleColumns(resultsStore.visibleColumns.filter(k => k !== key));
@@ -350,20 +357,20 @@
       <input
         class="search-input"
         type="search"
-        placeholder="Rechercher…"
+        placeholder="Search…"
         value={resultsStore.searchQuery}
         oninput={(e) => resultsStore.setSearchQuery((e.target as HTMLInputElement).value)}
       />
     </div>
-    <span class="row-count">{filtered.length} résultat{filtered.length !== 1 ? 's' : ''}</span>
+    <span class="row-count">{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
     <button
       class="btn-icon"
-      title="Auto-size toutes les colonnes"
+      title="Auto-size all columns"
       onclick={autoSizeAllColumns}
     >
       <Maximize2 size={15} />
     </button>
-    <button class="btn-icon" title="Colonnes visibles" onclick={() => (showDrawer = true)}>
+    <button class="btn-icon" title="Visible columns" onclick={() => (showDrawer = true)}>
       <Columns3 size={16} />
     </button>
   </div>
@@ -372,11 +379,11 @@
   {#if resultsStore.selected.size > 0}
     <div class="action-bar" transition:fly={{ y: -8, duration: 180 }}>
       <span class="selection-count">
-        {resultsStore.selected.size} sélectionné{resultsStore.selected.size > 1 ? 's' : ''}
+        {resultsStore.selected.size} selected
       </span>
       <div class="action-sep"></div>
-      <button class="action-btn" title="Copier les IPs" onclick={copySelection}>
-        <Copy size={14} /> Copier
+      <button class="action-btn" title="Copy IPs" onclick={copySelection}>
+        <Copy size={14} /> Copy
       </button>
       <button class="action-btn" title="Export CSV" onclick={exportCSV}>
         <Table2 size={14} /> CSV
@@ -387,24 +394,20 @@
       <button class="action-btn" title="Export JSON" onclick={exportJSON}>
         <Braces size={14} /> JSON
       </button>
-      <button class="action-btn" title="Ouvrir dans Google Maps"
-        onclick={() => { const r = selectedRecords()[0]; if (r) openGoogleMaps(r); }}
-      >
-        <MapPin size={14} /> Maps
-      </button>
-      <button class="action-btn" title="Voir détails"
+
+      <button class="action-btn" title="View details"
         onclick={() => { const r = selectedRecords()[0]; if (r) goto(`/ip/${r.ip}`); }}
       >
-        <Eye size={14} /> Détails
+        <Eye size={14} /> Details
       </button>
-      <button class="action-btn-ghost" title="Désélectionner" onclick={() => resultsStore.clearSelection()}>
+      <button class="action-btn-ghost" title="Deselect" onclick={() => resultsStore.clearSelection()}>
         <X size={14} />
       </button>
     </div>
   {/if}
 
   <!-- ── Data table ── -->
-  <div class="table-wrapper">
+  <div class="table-wrapper" bind:this={tableWrapper}>
     <table class="data-grid">
       <thead>
         <tr>
@@ -415,7 +418,7 @@
               checked={allSelected}
               indeterminate={resultsStore.selected.size > 0 && !allSelected}
               onclick={handleHeaderCheckbox}
-              title="Tout sélectionner"
+              title="Select all"
             />
           </th>
 
@@ -433,7 +436,7 @@
               ondrop={() => onDrop(col.key)}
               ondragend={() => { dragFromKey = null; dragOverKey = null; }}
               onclick={(e) => resultsStore.toggleSort(col.key, e.shiftKey)}
-              title="Clic: trier · Shift+clic: tri multiple · Glisser: réorganiser"
+              title="Click: sort · Shift+click: multi-sort · Drag: reorder"
             >
               <span class="th-content">
                 <span class="th-label">{col.label}</span>
@@ -456,8 +459,8 @@
               <button
                 class="resize-handle"
                 type="button"
-                aria-label="Redimensionner la colonne {col.label}"
-                title="Drag: redimensionner · Double-clic: auto-size"
+                aria-label="Resize column {col.label}"
+                title="Drag: resize · Double-click: auto-size"
                 onmousedown={(e) => startResize(e, col.key)}
                 ondblclick={(e) => { e.stopPropagation(); autoSizeColumn(col.key); }}
                 onclick={(e) => e.stopPropagation()}
@@ -482,8 +485,8 @@
           <tr>
             <td class="empty-state" colspan={visibleCols.length + 1}>
               {resultsStore.results.length === 0
-                ? 'Aucune donnée'
-                : 'Aucun résultat pour cette recherche'}
+                ? 'No data'
+                : 'No results for this search'}
             </td>
           </tr>
         {/each}
@@ -494,7 +497,7 @@
   <!-- ── Pagination ── -->
   <div class="pagination">
     <div class="page-size">
-      <span>Lignes&nbsp;:</span>
+      <span>Rows&nbsp;:</span>
       {#each pageSizeOptions as size}
         <button
           class="page-size-btn"
@@ -531,18 +534,14 @@
     <button class="ctx-item" role="menuitem"
       onclick={() => { goto(`/ip/${cm.record.ip}`); contextMenu = null; }}
     >
-      <Eye size={14} /> Voir détails
+      <Eye size={14} /> View details
     </button>
     <button class="ctx-item" role="menuitem"
       onclick={async () => { await navigator.clipboard.writeText(cm.record.ip); contextMenu = null; }}
     >
-      <Copy size={14} /> Copier IP
+      <Copy size={14} /> Copy IP
     </button>
-    <button class="ctx-item" role="menuitem"
-      onclick={() => { openGoogleMaps(cm.record); contextMenu = null; }}
-    >
-      <MapPin size={14} /> Google Maps
-    </button>
+
     <div class="ctx-sep"></div>
     <button class="ctx-item" role="menuitem"
       onclick={() => {
@@ -552,14 +551,14 @@
         contextMenu = null;
       }}
     >
-      <Download size={14} /> Exporter cette ligne
+      <Download size={14} /> Export this row
     </button>
     {#if cm.colKey && cm.colKey !== 'ip'}
       <div class="ctx-sep"></div>
       <button class="ctx-item ctx-muted" role="menuitem"
         onclick={() => { hideColumn(cm.colKey!); contextMenu = null; }}
       >
-        Masquer "{visibleCols.find(c => c.key === cm.colKey)?.label ?? cm.colKey}"
+        Hide "{visibleCols.find(c => c.key === cm.colKey)?.label ?? cm.colKey}"
       </button>
     {/if}
   </div>
@@ -576,8 +575,8 @@
   <div class="drawer" transition:fly={{ x: 320, duration: 200 }}>
     <div class="drawer-header">
       <div>
-        <span class="drawer-title">Colonnes</span>
-        <span class="drawer-count">{visibleCount} / {totalCount} affichées</span>
+        <span class="drawer-title">Columns</span>
+        <span class="drawer-count">{visibleCount} / {totalCount} visible</span>
       </div>
       <button class="btn-icon" onclick={() => (showDrawer = false)}><X size={16} /></button>
     </div>
@@ -609,16 +608,16 @@
       <button class="btn-small"
         onclick={() => resultsStore.setVisibleColumns(ALL_COLUMNS.map(c => c.key))}
       >
-        Tout afficher
+        Show all
       </button>
       <button class="btn-small"
         onclick={() => resultsStore.setVisibleColumns(['ip'])}
       >
-        Tout masquer
+        Hide all
       </button>
       <button class="btn-small"
         onclick={autoSizeAllColumns}
-        title="Recalculer toutes les largeurs"
+        title="Recalculate all widths"
       >
         <Maximize2 size={12} /> Auto-size
       </button>

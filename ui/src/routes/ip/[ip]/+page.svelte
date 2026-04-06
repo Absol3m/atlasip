@@ -3,7 +3,8 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { ArrowLeft, Globe, Server, Mail, Phone, MapPin, Network,
-           AlertTriangle, FileText, ChevronDown, ChevronUp, Copy } from 'lucide-svelte';
+           TriangleAlert, FileText, ChevronDown, ChevronUp, Copy, Download, ExternalLink } from 'lucide-svelte';
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import { resultsStore } from '$lib/stores/results.svelte';
   import { lookupSingle } from '$lib/services/lookup';
   import type { IpRecord } from '$lib/types/ip';
@@ -15,6 +16,7 @@
   let error = $state<string | null>(null);
   let showRawWhois = $state(false);
   let copied = $state(false);
+  let copiedWhois = $state(false);
 
   onMount(async () => {
     // Try the in-memory store first
@@ -40,6 +42,17 @@
     setTimeout(() => (copied = false), 1500);
   }
 
+  function exportWhois() {
+    if (!record?.raw_whois) return;
+    const blob = new Blob([record.raw_whois], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `whois_${ip}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   interface FieldGroup {
     title: string;
     icon: typeof Globe;
@@ -50,25 +63,25 @@
     if (!record) return [];
     return [
       {
-        title: 'Réseau',
+        title: 'Network',
         icon: Network,
         fields: [
           { label: 'CIDR',          value: record.cidr },
-          { label: 'De',            value: record.from_ip },
-          { label: 'À',             value: record.to_ip },
+          { label: 'From',          value: record.from_ip },
+          { label: 'To',            value: record.to_ip },
           { label: 'Network Name',  value: record.network_name },
-          { label: 'Statut',        value: record.status },
-          { label: 'Alloué le',     value: record.allocated },
+          { label: 'Status',        value: record.status },
+          { label: 'Allocated',     value: record.allocated },
         ],
       },
       {
         title: 'Organisation',
         icon: Globe,
         fields: [
-          { label: 'Propriétaire',  value: record.owner_name },
-          { label: 'Pays',          value: record.country },
-          { label: 'Adresse',       value: record.address },
-          { label: 'Code postal',   value: record.postal_code },
+          { label: 'Owner',         value: record.owner_name },
+          { label: 'Country',       value: record.country },
+          { label: 'Address',       value: record.address },
+          { label: 'Postal Code',   value: record.postal_code },
           { label: 'Contact',       value: record.contact_name },
           { label: 'Abuse Contact', value: record.abuse_contact },
         ],
@@ -78,8 +91,8 @@
         icon: Mail,
         fields: [
           { label: 'Emails',        value: record.emails },
-          { label: 'Abuse emails',  value: record.abuse_emails },
-          { label: 'Téléphone',     value: record.phone },
+          { label: 'Abuse Emails',  value: record.abuse_emails },
+          { label: 'Phone',         value: record.phone },
           { label: 'Fax',           value: record.fax },
         ],
       },
@@ -88,8 +101,8 @@
         icon: Server,
         fields: [
           { label: 'Hostname',      value: record.host_name },
-          { label: 'Résolu depuis', value: record.resolved_name },
-          { label: 'Source WHOIS',  value: record.whois_source },
+          { label: 'Resolved from', value: record.resolved_name },
+          { label: 'WHOIS Source',  value: record.whois_source },
         ],
       },
     ];
@@ -105,17 +118,42 @@
 <div class="detail-page">
   <!-- Back button -->
   <button class="back-btn" onclick={() => goto('/lookup')}>
-    <ArrowLeft size={16} /> Retour
+    <ArrowLeft size={16} /> Back
   </button>
 
   {#if loading}
-    <div class="loading">
-      <span class="spinner"></span>
-      <span>Chargement…</span>
+    <!-- Skeleton header -->
+    <div class="sk-header">
+      <div class="sk-ip"></div>
+      <div class="sk-pills">
+        <div class="sk-pill"></div>
+        <div class="sk-pill" style="width:120px"></div>
+        <div class="sk-pill" style="width:90px"></div>
+      </div>
+    </div>
+
+    <!-- Skeleton cards grid -->
+    <div class="sk-groups">
+      {#each [4, 5, 3, 3] as rows}
+        <div class="sk-card">
+          <div class="sk-card-title"></div>
+          {#each Array(rows) as _}
+            <div class="sk-row">
+              <div class="sk-label"></div>
+              <div class="sk-value"></div>
+            </div>
+          {/each}
+        </div>
+      {/each}
+    </div>
+
+    <!-- Skeleton WHOIS -->
+    <div class="sk-card sk-whois">
+      <div class="sk-card-title"></div>
     </div>
   {:else if error}
     <div class="error-banner">
-      <AlertTriangle size={16} />
+      <TriangleAlert size={16} />
       <span>{error}</span>
     </div>
   {:else if record}
@@ -123,16 +161,16 @@
     <div class="detail-header">
       <div class="ip-display">
         <span class="ip-text">{record.ip}</span>
-        <button class="copy-btn" onclick={copyIP} title="Copier">
+        <button class="copy-btn" onclick={copyIP} title="Copy">
           <Copy size={14} />
-          {#if copied}<span class="copied-label">Copié !</span>{/if}
+          {#if copied}<span class="copied-label">Copied!</span>{/if}
         </button>
       </div>
       {#if record.lookup_errors.length > 0}
         <div class="error-pills">
           {#each record.lookup_errors as err}
             <span class="error-pill" title={err}>
-              <AlertTriangle size={11} /> Erreur de résolution
+              <TriangleAlert size={11} /> Resolution error
             </span>
           {/each}
         </div>
@@ -179,17 +217,64 @@
       {/each}
     </div>
 
+    <!-- GeoIP map -->
+    {#if record.address || record.country}
+      {@const mapQuery = [record.address, record.country].filter(Boolean).join(', ')}
+      <div class="map-card">
+        <div class="map-title">
+          <MapPin size={15} />
+          Server Location (GeoIP)
+          <button
+            class="map-open-btn"
+            onclick={() => openUrl(`https://maps.google.com/?q=${encodeURIComponent(mapQuery)}`)}
+            title="Open in Google Maps"
+          >
+            <ExternalLink size={13} /> Open in Maps
+          </button>
+        </div>
+        <iframe
+          class="map-frame"
+          title="GeoIP Location"
+          src="https://maps.google.com/maps?q={encodeURIComponent(mapQuery)}&output=embed&z=10"
+          loading="lazy"
+          referrerpolicy="no-referrer"
+        ></iframe>
+      </div>
+    {/if}
+
     <!-- Raw WHOIS -->
     {#if record.raw_whois}
       <div class="raw-section">
-        <button
-          class="raw-toggle"
-          onclick={() => showRawWhois = !showRawWhois}
-        >
-          <FileText size={15} />
-          WHOIS brut
-          {#if showRawWhois}<ChevronUp size={15} />{:else}<ChevronDown size={15} />{/if}
-        </button>
+        <div class="raw-header">
+          <button
+            class="raw-toggle"
+            onclick={() => showRawWhois = !showRawWhois}
+          >
+            <FileText size={15} />
+            Raw WHOIS
+            {#if showRawWhois}<ChevronUp size={15} />{:else}<ChevronDown size={15} />{/if}
+          </button>
+          <button
+            class="copy-whois-btn"
+            onclick={async () => {
+              await navigator.clipboard.writeText(record!.raw_whois!);
+              copiedWhois = true;
+              setTimeout(() => (copiedWhois = false), 1500);
+            }}
+            title="Copy raw WHOIS"
+          >
+            <Copy size={13} />
+            {copiedWhois ? 'Copied!' : 'Copy WHOIS'}
+          </button>
+          <button
+            class="copy-whois-btn"
+            onclick={exportWhois}
+            title="Export WHOIS as .txt"
+          >
+            <Download size={13} />
+            Export WHOIS (.txt)
+          </button>
+        </div>
         {#if showRawWhois}
           <pre class="raw-content">{record.raw_whois}</pre>
         {/if}
@@ -197,7 +282,7 @@
     {/if}
   {:else}
     <div class="not-found">
-      <p>IP non trouvée : <code>{ip}</code></p>
+      <p>IP not found: <code>{ip}</code></p>
     </div>
   {/if}
 </div>
@@ -233,27 +318,97 @@
     color: var(--color-text);
   }
 
-  .loading {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--color-text-muted);
-    padding: 2rem;
+  /* ── Skeletons ── */
+  @keyframes shimmer {
+    0%   { background-position: -400px 0; }
+    100% { background-position:  400px 0; }
   }
 
-  .spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid var(--color-border);
-    border-top-color: var(--color-accent);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    display: inline-block;
+  .sk-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .sk-groups {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 1.25rem;
+  }
+
+  .sk-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+
+  .sk-whois {
+    height: 48px;
+  }
+
+  .sk-card-title {
+    height: 38px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-header-bg);
+  }
+
+  .sk-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .sk-row:last-child {
+    border-bottom: none;
+  }
+
+  .sk-ip,
+  .sk-pill,
+  .sk-label,
+  .sk-value,
+  .sk-card-title {
+    border-radius: 4px;
+    background: linear-gradient(
+      90deg,
+      var(--color-border) 25%,
+      var(--color-hover)  50%,
+      var(--color-border) 75%
+    );
+    background-size: 800px 100%;
+    animation: shimmer 1.4s infinite linear;
+  }
+
+  .sk-ip {
+    width: 200px;
+    height: 36px;
+    border-radius: 6px;
+  }
+
+  .sk-pills {
+    display: flex;
+    gap: 6px;
+  }
+
+  .sk-pill {
+    width: 80px;
+    height: 22px;
+    border-radius: 999px;
+  }
+
+  .sk-label {
+    width: 90px;
+    height: 13px;
     flex-shrink: 0;
   }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
+  .sk-value {
+    flex: 1;
+    height: 13px;
+    max-width: 220px;
   }
 
   .error-banner {
@@ -394,16 +549,69 @@
   }
 
   .field-label {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--color-text-muted);
     min-width: 110px;
     flex-shrink: 0;
   }
 
   .field-value {
-    font-size: 13.5px;
+    font-size: 13px;
     color: var(--color-text);
     word-break: break-word;
+  }
+
+  /* ── GeoIP map ── */
+  .map-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+
+  .map-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-muted);
+    background: var(--color-header-bg);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .map-open-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    padding: 4px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 5px;
+    background: none;
+    font-size: 11.5px;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .map-open-btn:hover {
+    background: var(--color-hover);
+    color: var(--color-accent);
+  }
+
+  .map-frame {
+    display: block;
+    width: 100%;
+    height: 280px;
+    border: none;
   }
 
   /* ── Raw WHOIS ── */
@@ -415,16 +623,23 @@
     box-shadow: var(--shadow);
   }
 
+  .raw-header {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--color-border);
+  }
+
   .raw-toggle {
     display: flex;
     align-items: center;
     gap: 8px;
-    width: 100%;
-    padding: 11px 16px;
+    flex: 1;
+    border-bottom: none;
+    padding: 10px 14px;
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--color-text);
     text-align: left;
@@ -435,18 +650,42 @@
     background: var(--color-hover);
   }
 
+  .copy-whois-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+    padding: 6px 12px;
+    margin-right: 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 5px;
+    background: none;
+    font-size: 12px;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .copy-whois-btn:hover {
+    background: var(--color-hover);
+    color: var(--color-text);
+  }
+
   .raw-content {
     padding: 14px 16px;
-    border-top: 1px solid var(--color-border);
+    border-top: none;
     font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
-    font-size: 12px;
-    line-height: 1.6;
+    font-size: 12.5px;
+    line-height: 1.75;
     color: var(--color-text);
+    background: var(--color-bg);
     overflow-x: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 480px;
     overflow-y: auto;
+    white-space: pre;
+    word-break: normal;
+    tab-size: 4;
+    max-height: 520px;
   }
 
   .not-found {

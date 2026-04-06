@@ -2,7 +2,7 @@ import type { LocaleKey } from './en';
 
 const fr: Record<LocaleKey, string> = {
   'app.title': 'AtlasIP',
-  'app.version': '0.1.0',
+  'app.version': '0.3.0-alpha',
 
   'nav.analysis': 'Analyse',
   'nav.history': 'Historique',
