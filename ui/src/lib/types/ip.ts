@@ -1,3 +1,9 @@
+export interface DnsRecord {
+  record_type: string;
+  value: string;
+  ttl: number;
+}
+
 export interface IpRecord {
   id: string;
   order: number;
@@ -23,6 +29,7 @@ export interface IpRecord {
   abuse_contact: string | null;
   raw_whois: string | null;
   raw_rdap: unknown;
+  dns_records: DnsRecord[];
   lookup_errors: string[];
 }
 

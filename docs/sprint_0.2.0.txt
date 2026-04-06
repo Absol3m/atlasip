@@ -1,0 +1,107 @@
+PROMPT 1 — Country : nom complet
+Corrige la colonne Country du DataGrid.
+Affiche le nom complet du pays au lieu du code ISO2.
+Utilise une table interne ISO2 → nom complet.
+Ne modifie pas le backend.
+Ne modifie pas les exports CSV.
+Ne touche à rien d’autre.
+
+PROMPT 2 — Colonne #
+Corrige la colonne # du DataGrid.
+L’index doit recommencer à 1 pour chaque nouvelle analyse.
+Utilise index + 1 basé sur la liste courante.
+Ne touche pas au backend.
+Ne modifie rien d’autre.
+
+PROMPT 3 — Troncature propre des colonnes longues
+Dans le DataGrid, tronque proprement les colonnes longues (Address, Contact, Email).
+Ajoute un tooltip avec la valeur complète.
+Ne modifie rien d’autre.
+
+PROMPT 4 — Harmonisation des cards de la page IP
+Dans la page de détail IP, harmonise les cards :
+- même espacement
+- même taille de police
+- même alignement
+Ne modifie pas la structure générale.
+Ne touche pas au backend.
+
+PROMPT 5 — Gestion des champs vides
+Dans les sections Organisation, Réseau, Contacts :
+N’affiche pas les lignes vides.
+Masque proprement les champs absents.
+Ne modifie rien d’autre.
+
+PROMPT 6 — Section DNS
+Améliore l’affichage DNS :
+- gère les valeurs multiples
+- gère les erreurs DNS avec un message clair
+Ne modifie pas le backend.
+
+PROMPT 7 — WHOIS brut : affichage
+Dans la section WHOIS brut :
+- utilise une police monospace
+- ajoute un scroll vertical
+- améliore la lisibilité
+Ne modifie rien d’autre.
+
+PROMPT 8 — Bouton Copy WHOIS
+Ajoute un bouton “Copy WHOIS” dans la section WHOIS brut.
+Utilise l’API clipboard de Tauri.
+Ne modifie rien d’autre.
+
+PROMPT 9 — Export WHOIS brut
+Ajoute un bouton “Export WHOIS (.txt)”.
+Génère un fichier texte contenant uniquement le WHOIS brut.
+Utilise Tauri pour l’écriture de fichier.
+Ne modifie rien d’autre.
+
+PROMPT 10 — Export Résumé
+Ajoute un bouton “Export Summary (.txt)”.
+Le fichier doit contenir :
+- IP
+- Country (nom complet)
+- Owner
+- Network
+- CIDR
+- Contacts
+- DNS résolu
+Ne modifie rien d’autre.
+
+PROMPT 11 — Export HTML complet
+Ajoute un bouton “Export Full Page (.html)”.
+Génère un fichier HTML simple contenant toutes les sections.
+Style minimal inline.
+Ne modifie rien d’autre.
+
+PROMPT 12 — Sidebar rétractable
+Rends la sidebar rétractable :
+- mode normal
+- mode icônes uniquement
+Stocke l’état dans localStorage.
+Ne modifie rien d’autre.
+
+PROMPT 13 — Retour avec état préservé
+Quand on clique sur “Retour” depuis la page IP :
+- restaurer la liste d’analyse
+- restaurer le tri
+- restaurer le filtre
+- restaurer la position de scroll
+Ne modifie rien d’autre.
+
+PROMPT 14 — Skeletons
+Ajoute des skeletons cohérents dans la page IP :
+- résumé
+- organisation
+- réseau
+- contacts
+- DNS
+- WHOIS
+Ne modifie rien d’autre.
+
+PROMPT 15 — Page History (UI uniquement)
+Crée la page History (UI seulement).
+Affiche la liste des IP analysées.
+Un clic recharge l’analyse.
+Ne touche pas au backend.
+Ne modifie rien d’autre.

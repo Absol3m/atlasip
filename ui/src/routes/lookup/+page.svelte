@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { goto } from '$app/navigation';
   import { i18n } from '$lib/services/i18n.svelte';
   import { analysisStore } from '$lib/stores/analysis.svelte';
   import { resultsStore } from '$lib/stores/results.svelte';
+  import { historyStore } from '$lib/stores/history.svelte';
   import { lookupIPs } from '$lib/services/lookup';
   import AnalysisInput from '$lib/components/AnalysisInput.svelte';
   import ResultsTable from '$lib/components/ResultsTable.svelte';
@@ -24,6 +25,13 @@
   // Generation counter: incremented each time the input is cleared so that any
   // in-flight analysis resolve() can detect it is stale and discard its results.
   let analysisGeneration = 0;
+
+  onMount(() => {
+    if (analysisStore.pendingTrigger) {
+      analysisStore.pendingTrigger = false;
+      analyze();
+    }
+  });
 
   $effect(() => {
     // Track rawInput reactively; act only when it becomes fully empty.
@@ -62,6 +70,7 @@
       // Populate the store so the detail page can find the record without a
       // second API call (resultsStore.results is read by /ip/[ip]/+page.svelte).
       resultsStore.setResults(records);
+      historyStore.add(targets, records.length);
 
       if (records.length === 1) {
         // Single result: suppress the table and navigate to the detail page.
@@ -143,7 +152,7 @@
           <div class="empty-icon" aria-hidden="true">⚠</div>
           <p class="empty-text">{resultsStore.error}</p>
         {:else}
-          <div class="empty-icon" aria-hidden="true">⬡</div>
+          <span class="empty-logo" aria-hidden="true"></span>
           <p class="empty-text">{i18n.t('analysis.empty')}</p>
         {/if}
       </div>
@@ -257,11 +266,14 @@
     user-select: none;
   }
 
-  .empty-icon {
-    font-size: 2.5rem;
-    opacity: 0.2;
-    color: var(--color-accent);
-    line-height: 1;
+  .empty-logo {
+    display: block;
+    width: 56px;
+    height: 56px;
+    background-color: var(--color-accent);
+    -webkit-mask: url('/img/logo.svg') no-repeat center / contain;
+    mask: url('/img/logo.svg') no-repeat center / contain;
+    opacity: 0.18;
   }
 
   .empty-text {

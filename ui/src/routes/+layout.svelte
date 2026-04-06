@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { theme } from '$lib/stores/app';
   import { i18n } from '$lib/services/i18n.svelte';
+  import { historyStore } from '$lib/stores/history.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Toast from '$lib/components/Toast.svelte';
 
@@ -11,6 +12,7 @@
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     theme.init(prefersDark ? 'dark' : 'light');
     i18n.init();
+    historyStore.init();
   });
 </script>
 
