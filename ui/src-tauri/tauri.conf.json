@@ -3,12 +3,14 @@
   "productName": "AtlasIP",
   "version": "0.3.0",
   "identifier": "atlas.ip",
+
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../build"
   },
+
   "app": {
     "windows": [
       {
@@ -23,9 +25,11 @@
       "csp": null
     }
   },
+
   "bundle": {
     "active": true,
     "targets": "all",
+
     "icon": [
       "icons/icon_32.png",
       "icons/icon_128.png",
@@ -34,6 +38,9 @@
       "icons/icon_1024.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+
+    "license": "../LICENSE",
+    "copyright": "Copyright © 2026 Absol3m"
   }
 }
