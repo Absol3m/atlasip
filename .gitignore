@@ -24,3 +24,9 @@ target
 # Added by cargo
 
 /target
+/internaldoc
+
+# -------------------------
+# macOS system files
+# -------------------------
+.DS_Store
