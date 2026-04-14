@@ -7,6 +7,8 @@
 //   • TTL on every record            (P2-DNS-006)
 //   • Parallel A + AAAA + CNAME + TXT (P2-DNS-005)
 //   • Global lookup deadline          (P1-NETWORK-003)
+//   • DNS-over-HTTPS reverse lookup   (spec §4 — DoH)
+//   • Intelligent fallback            (spec §5 — System → DoH)
 
 use anyhow::{Context, Result};
 use hickory_resolver::{
@@ -18,7 +20,148 @@ use hickory_resolver::{
 use std::{net::IpAddr, time::Duration};
 use tokio::time::timeout;
 
-use crate::models::DnsRecord;
+use crate::{config::DnsMode, models::DnsRecord};
+
+// ---------------------------------------------------------------------------
+// DoH response structures
+// ---------------------------------------------------------------------------
+
+/// Top-level Cloudflare / RFC-8484 JSON DNS response.
+#[derive(Debug, serde::Deserialize)]
+struct DohResponse {
+    #[serde(rename = "Answer")]
+    answer: Option<Vec<DohAnswer>>,
+}
+
+/// Individual answer record in a DoH JSON response.
+#[derive(Debug, serde::Deserialize)]
+struct DohAnswer {
+    /// Raw string value of the record (PTR name with trailing dot).
+    data: String,
+}
+
+// ---------------------------------------------------------------------------
+// DoH helpers
+// ---------------------------------------------------------------------------
+
+/// Convert an IP address string to its PTR query name.
+///
+/// IPv4 `1.2.3.4`  → `4.3.2.1.in-addr.arpa`
+/// IPv6 `2001:db8::1` → nibble-reversed `.ip6.arpa`
+fn ip_to_ptr_name(ip: &str) -> Option<String> {
+    let addr: IpAddr = ip.parse().ok()?;
+    match addr {
+        IpAddr::V4(v4) => {
+            let [a, b, c, d] = v4.octets();
+            Some(format!("{d}.{c}.{b}.{a}.in-addr.arpa"))
+        }
+        IpAddr::V6(v6) => {
+            // Expand to 32 hex nibbles, reverse, join with dots.
+            let hex: String = v6.octets().iter().map(|b| format!("{b:02x}")).collect();
+            let reversed: String = hex
+                .chars()
+                .rev()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(".");
+            Some(format!("{reversed}.ip6.arpa"))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public API — DoH reverse lookup (spec §4)
+// ---------------------------------------------------------------------------
+
+/// Perform a PTR reverse lookup for `ip` using DNS-over-HTTPS.
+///
+/// Uses a GET request with `Accept: application/dns-json` to `endpoint`
+/// (default: `https://cloudflare-dns.com/dns-query`).
+/// Never touches the system resolver.
+///
+/// Returns:
+/// - `Ok(Some(ptr))` — PTR record found; trailing dot stripped.
+/// - `Ok(None)`      — NXDOMAIN or empty answer.
+/// - `Err(_)`        — network / parse error.
+pub async fn reverse_dns_doh(ip: &str, endpoint: &str, timeout_ms: u64) -> Result<Option<String>> {
+    let ptr_name = ip_to_ptr_name(ip)
+        .ok_or_else(|| anyhow::anyhow!("Invalid IP for PTR conversion: '{ip}'"))?;
+
+    let url = format!("{endpoint}?name={ptr_name}&type=PTR");
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .context("failed to build DoH HTTP client")?;
+
+    let response = client
+        .get(&url)
+        .header("Accept", "application/dns-json")
+        .send()
+        .await
+        .with_context(|| format!("DoH request failed for '{ip}'"))?;
+
+    let body: DohResponse = response
+        .json()
+        .await
+        .context("failed to parse DoH JSON response")?;
+
+    let ptr = body
+        .answer
+        .and_then(|answers| answers.into_iter().next())
+        .map(|a| a.data.trim_end_matches('.').to_owned())
+        .filter(|s| !s.is_empty());
+
+    Ok(ptr)
+}
+
+// ---------------------------------------------------------------------------
+// Public API — intelligent fallback reverse lookup (spec §5)
+// ---------------------------------------------------------------------------
+
+/// Perform a reverse PTR lookup using the strategy defined in `dns_mode`.
+///
+/// | mode         | behaviour                                                    |
+/// |--------------|--------------------------------------------------------------|
+/// | `Disabled`   | Always returns `Ok(None)`.                                   |
+/// | `SystemOnly` | Uses the OS resolver only.                                   |
+/// | `DohOnly`    | Uses DoH only.                                               |
+/// | `Automatic`  | Tries OS resolver (bounded by `system_timeout_ms`); on any  |
+/// |              | error or timeout, retries with DoH.                          |
+pub async fn reverse_lookup_smart(
+    ip: &str,
+    dns_mode: &DnsMode,
+    system_timeout_ms: u64,
+    doh_endpoint: &str,
+    doh_timeout_ms: u64,
+) -> Result<Option<String>> {
+    match dns_mode {
+        DnsMode::Disabled => Ok(None),
+
+        DnsMode::SystemOnly => reverse_lookup(ip, system_timeout_ms).await,
+
+        DnsMode::DohOnly => reverse_dns_doh(ip, doh_endpoint, doh_timeout_ms).await,
+
+        DnsMode::Automatic => {
+            // First leg: system DNS with a tight deadline.
+            let system_result = reverse_lookup(ip, system_timeout_ms).await;
+
+            match system_result {
+                // Got a definitive answer (even if None = no PTR) — use it.
+                Ok(result) => Ok(result),
+                // Any error (timeout, SERVFAIL, network…) → DoH fallback.
+                Err(_) => {
+                    tracing::debug!(
+                        target: "atlasip::dns",
+                        %ip,
+                        "system DNS failed; falling back to DoH"
+                    );
+                    reverse_dns_doh(ip, doh_endpoint, doh_timeout_ms).await
+                }
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Public result type for a full hostname lookup
@@ -314,5 +457,110 @@ mod tests {
         let resolver = build_resolver(TIMEOUT);
         let recs = query_records(&resolver, "no-such-host.invalid", RecordType::A).await;
         assert!(recs.is_empty());
+    }
+
+    // ── PTR name helpers ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_ip_to_ptr_name_ipv4() {
+        assert_eq!(
+            ip_to_ptr_name("8.8.8.8").unwrap(),
+            "8.8.8.8.in-addr.arpa"
+        );
+        assert_eq!(
+            ip_to_ptr_name("1.2.3.4").unwrap(),
+            "4.3.2.1.in-addr.arpa"
+        );
+    }
+
+    #[test]
+    fn test_ip_to_ptr_name_ipv6() {
+        // 2001:db8::1 expanded = 20010db8000000000000000000000001
+        // reversed nibbles = 1000000000000000000000008bd01002
+        // joined with dots + .ip6.arpa
+        let ptr = ip_to_ptr_name("2001:db8::1").unwrap();
+        assert!(ptr.ends_with(".ip6.arpa"), "unexpected: {ptr}");
+    }
+
+    #[test]
+    fn test_ip_to_ptr_name_invalid() {
+        assert!(ip_to_ptr_name("not-an-ip").is_none());
+    }
+
+    // ── DoH reverse lookup ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_reverse_dns_doh_known_ip() {
+        // Cloudflare's 1.1.1.1 has a well-known PTR record.
+        let result = reverse_dns_doh(
+            "1.1.1.1",
+            "https://cloudflare-dns.com/dns-query",
+            TIMEOUT,
+        )
+        .await
+        .unwrap();
+        assert!(result.is_some(), "expected PTR for 1.1.1.1");
+        let ptr = result.unwrap();
+        assert!(!ptr.is_empty());
+        assert!(!ptr.ends_with('.'), "trailing dot should be stripped");
+    }
+
+    #[tokio::test]
+    async fn test_reverse_dns_doh_no_ptr_returns_none() {
+        // RFC 5737 documentation IP — guaranteed no PTR.
+        let result = reverse_dns_doh(
+            "192.0.2.1",
+            "https://cloudflare-dns.com/dns-query",
+            TIMEOUT,
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none());
+    }
+
+    // ── Smart fallback ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_smart_disabled_returns_none() {
+        let result = reverse_lookup_smart(
+            "8.8.8.8",
+            &DnsMode::Disabled,
+            300,
+            "https://cloudflare-dns.com/dns-query",
+            TIMEOUT,
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_smart_doh_only() {
+        let result = reverse_lookup_smart(
+            "1.1.1.1",
+            &DnsMode::DohOnly,
+            300,
+            "https://cloudflare-dns.com/dns-query",
+            TIMEOUT,
+        )
+        .await
+        .unwrap();
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_smart_automatic_falls_back_on_bad_timeout() {
+        // Use 1 ms system timeout to force immediate fallback to DoH.
+        let result = reverse_lookup_smart(
+            "1.1.1.1",
+            &DnsMode::Automatic,
+            1,          // essentially zero: system DNS will time out
+            "https://cloudflare-dns.com/dns-query",
+            TIMEOUT,
+        )
+        .await;
+        // Either the system DNS succeeded (fast enough) or DoH took over.
+        // Either way the call must not return Err.
+        assert!(result.is_ok());
     }
 }

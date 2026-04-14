@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name        = "atlasip"
-version     = "0.3.0-alpha"
+version     = "0.5.0-alpha"
 edition     = "2024"
 description = "Modern IP analysis tool — backend for AtlasIP"
 license     = "Apache-2.0"
@@ -53,3 +53,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # Logging / tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Windows service management (spec §6)
+# Only compiled on Windows — no impact on macOS / Linux builds.
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.6"

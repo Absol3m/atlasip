@@ -6,6 +6,29 @@ use std::{
 };
 
 // ---------------------------------------------------------------------------
+// DnsMode
+// ---------------------------------------------------------------------------
+
+/// DNS resolution strategy (spec §5).
+///
+/// Controls whether PTR / forward lookups use the system resolver, DNS-over-
+/// HTTPS (DoH), an automatic fallback chain, or are disabled entirely.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DnsMode {
+    /// Use only the OS system resolver.
+    SystemOnly,
+    /// Use only the configured DoH endpoint; never touch the system resolver.
+    DohOnly,
+    /// Try the system resolver first (bounded by `dns_system_timeout_ms`);
+    /// fall back to DoH on timeout or error.  **Default.**
+    #[default]
+    Automatic,
+    /// Disable all DNS resolution (PTR fields will be `null`).
+    Disabled,
+}
+
+// ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
 
@@ -129,10 +152,36 @@ pub struct AppConfig {
 
     // ── Structured proxy block (spec §7) ───────────────────────────────────
     pub proxy: ProxyConfig,
+
+    // ── Headless / service mode (spec §0.5) ───────────────────────────────
+    /// When `true`, AtlasIP starts without any UI (Tauri window is skipped)
+    /// and runs as a pure HTTP-backend process.  Suitable for use as a
+    /// system service (Windows, macOS, Linux).
+    #[serde(default)]
+    pub headless: bool,
+
+    // ── DNS mode (spec §5) ────────────────────────────────────────────────
+    /// Which resolver strategy to use for PTR / forward DNS lookups.
+    #[serde(default)]
+    pub dns_mode: DnsMode,
+
+    /// URL of the DNS-over-HTTPS endpoint used when `dns_mode` is
+    /// `DohOnly` or `Automatic` (DoH fallback leg).
+    /// Default: Cloudflare's public resolver.
+    #[serde(default = "default_doh_endpoint")]
+    pub doh_endpoint: String,
+
+    /// System-DNS timeout in milliseconds used in `Automatic` mode before
+    /// falling back to DoH.  Kept short to stay transparent on fast
+    /// corporate LANs.  Default: 300 ms.
+    #[serde(default = "default_dns_system_timeout_ms")]
+    pub dns_system_timeout_ms: u64,
 }
 
-fn default_global_timeout_ms() -> u64 { 5_000 }
-fn default_cache_ttl_secs()    -> u64 { 3_600 }
+fn default_global_timeout_ms()    -> u64 { 5_000 }
+fn default_cache_ttl_secs()       -> u64 { 3_600 }
+fn default_doh_endpoint()         -> String { "https://cloudflare-dns.com/dns-query".to_string() }
+fn default_dns_system_timeout_ms() -> u64 { 300 }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -158,6 +207,10 @@ impl Default for AppConfig {
             proxy_host: String::new(),
             proxy_port: 0,
             proxy: ProxyConfig::default(),
+            headless: false,
+            dns_mode: DnsMode::Automatic,
+            doh_endpoint: default_doh_endpoint(),
+            dns_system_timeout_ms: default_dns_system_timeout_ms(),
         }
     }
 }
