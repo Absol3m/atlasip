@@ -7,11 +7,12 @@ use std::{
 use tracing::info;
 
 use crate::{
-    config::AppConfig,
+    config::{AppConfig, DnsMode},
     export::{self, ExportFormat},
     http::{self, AppState},
     i18n::I18n,
     models::IpRecord,
+    service,
     utils,
 };
 
@@ -83,6 +84,56 @@ pub enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+
+    // ── Service management (spec §6/7/8) ────────────────────────────────────
+
+    /// Install AtlasIP as a Windows service (Administrator required).
+    ///
+    /// The service starts automatically with Windows and exposes the local
+    /// HTTP API on 127.0.0.1:<port>.
+    #[cfg(windows)]
+    InstallService,
+
+    /// Uninstall the AtlasIP Windows service (Administrator required).
+    #[cfg(windows)]
+    UninstallService,
+
+    /// Install AtlasIP as a macOS LaunchAgent or LaunchDaemon.
+    ///
+    /// Pass `--daemon` to install as a system daemon under
+    /// /Library/LaunchDaemons (requires root).  The default installs a user
+    /// agent under ~/Library/LaunchAgents.
+    #[cfg(target_os = "macos")]
+    InstallServiceMacos {
+        /// Install as a system daemon (requires root).
+        #[arg(long)]
+        daemon: bool,
+    },
+
+    /// Uninstall the AtlasIP macOS launchd service.
+    #[cfg(target_os = "macos")]
+    UninstallServiceMacos {
+        /// Remove the system daemon (requires root).
+        #[arg(long)]
+        daemon: bool,
+    },
+
+    /// Install AtlasIP as a systemd service (requires root / sudo).
+    ///
+    /// Writes /etc/systemd/system/atlasip.service and enables it.
+    #[cfg(target_os = "linux")]
+    InstallServiceLinux,
+
+    /// Uninstall the AtlasIP systemd service (requires root / sudo).
+    #[cfg(target_os = "linux")]
+    UninstallServiceLinux,
+
+    /// Internal: invoked by the Windows SCM to run AtlasIP as a service.
+    ///
+    /// Do NOT call this manually.
+    #[cfg(windows)]
+    #[command(hide = true)]
+    RunService,
 }
 
 #[derive(Subcommand, Debug)]
@@ -121,6 +172,32 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             ConfigAction::Show => cmd_config_show(),
             ConfigAction::Set { kv } => cmd_config_set(kv),
         },
+
+        // ── Service commands ─────────────────────────────────────────────────
+        #[cfg(windows)]
+        Commands::InstallService => service::windows::install(),
+
+        #[cfg(windows)]
+        Commands::UninstallService => service::windows::uninstall(),
+
+        #[cfg(windows)]
+        Commands::RunService => service::windows::run_dispatcher(),
+
+        #[cfg(target_os = "macos")]
+        Commands::InstallServiceMacos { daemon } => {
+            service::macos::install(!daemon) // user_mode = !daemon
+        }
+
+        #[cfg(target_os = "macos")]
+        Commands::UninstallServiceMacos { daemon } => {
+            service::macos::uninstall(!daemon)
+        }
+
+        #[cfg(target_os = "linux")]
+        Commands::InstallServiceLinux => service::linux::install(),
+
+        #[cfg(target_os = "linux")]
+        Commands::UninstallServiceLinux => service::linux::uninstall(),
     }
 }
 
@@ -259,6 +336,23 @@ fn apply_key_value(config: &mut AppConfig, kv: &str) -> anyhow::Result<()> {
         "proxy.https"  => config.proxy.https  = opt_str(value),
         "proxy.socks4" => config.proxy.socks4 = opt_str(value),
         "proxy.socks5" => config.proxy.socks5 = opt_str(value),
+
+        // Headless / service mode
+        "headless" => config.headless = parse_bool(value, key)?,
+
+        // DNS mode
+        "dns_mode" => {
+            config.dns_mode = match value.to_ascii_lowercase().as_str() {
+                "system_only"  | "system"   => DnsMode::SystemOnly,
+                "doh_only"     | "doh"      => DnsMode::DohOnly,
+                "automatic"    | "auto"     => DnsMode::Automatic,
+                "disabled"     | "off"      => DnsMode::Disabled,
+                _ => anyhow::bail!("Invalid dns_mode '{value}': expected system_only | doh_only | automatic | disabled"),
+            };
+        }
+
+        "doh_endpoint"          => config.doh_endpoint          = value.to_owned(),
+        "dns_system_timeout_ms" => config.dns_system_timeout_ms = parse_field(value, key)?,
 
         _ => anyhow::bail!("Unknown config key: {key}"),
     }

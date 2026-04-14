@@ -109,6 +109,7 @@ pub fn build_router(state: AppState) -> Router {
         .allow_origin(Any);
 
     Router::new()
+        // ── Existing routes (backward-compatible) ────────────────────────────
         .route("/health",                get(health))
         .route("/lookup/ip/:ip",         get(lookup_ip))
         .route("/lookup/hostname/:host", get(lookup_hostname))
@@ -116,6 +117,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/export",                get(export_records))
         .route("/config",                get(get_config).post(update_config))
         .route("/metrics",               get(get_metrics))
+        // ── v0.5 headless / Chrome-extension API (spec §3) ──────────────────
+        // These routes are stable aliases exposed for the extension and external
+        // integrations.  They share the same pipeline as the /lookup/* routes.
+        .route("/analyze/ip/:ip",        get(analyze_ip))
+        .route("/analyze/domain/:domain", get(analyze_domain))
+        .route("/reverse/:ip",           get(reverse_ip))
         .layer(cors)
         .with_state(state)
 }
@@ -591,6 +598,76 @@ async fn update_config(
 /// GET /metrics → `MetricsSnapshot` (P3-PERF-016)
 async fn get_metrics(State(state): State<AppState>) -> impl IntoResponse {
     Json(state.metrics.snapshot())
+}
+
+// ---------------------------------------------------------------------------
+// v0.5 headless / Chrome-extension routes (spec §3)
+// ---------------------------------------------------------------------------
+
+/// GET /analyze/ip/:ip
+///
+/// Stable alias for `/lookup/ip/:ip`.  Full RDAP+WHOIS+DNS pipeline.
+/// Intended as the primary endpoint for the Chrome extension.
+async fn analyze_ip(
+    state: State<AppState>,
+    path:  Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    lookup_ip(state, path).await
+}
+
+/// GET /analyze/domain/:domain
+///
+/// Stable alias for `/lookup/hostname/:domain`.
+async fn analyze_domain(
+    state: State<AppState>,
+    path:  Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    lookup_hostname(state, path).await
+}
+
+/// GET /reverse/:ip
+///
+/// Lightweight PTR-only lookup that uses the DNS strategy configured in
+/// `AppConfig.dns_mode` (System / DoH / Automatic / Disabled).
+///
+/// Response:
+/// ```json
+/// { "ip": "8.8.8.8", "ptr": "dns.google", "dns_mode": "automatic" }
+/// ```
+/// When no PTR record exists, `ptr` is `null`.
+async fn reverse_ip(
+    State(state): State<AppState>,
+    Path(ip):     Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    // Validate the IP address first.
+    if ip.parse::<std::net::IpAddr>().is_err() {
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": format!("Invalid IP address: '{ip}'") })),
+        )
+            .into_response());
+    }
+
+    let cfg = state.config.read().await;
+    let ptr = dns::reverse_lookup_smart(
+        &ip,
+        &cfg.dns_mode,
+        cfg.dns_system_timeout_ms,
+        &cfg.doh_endpoint,
+        cfg.dns_timeout_ms,
+    )
+    .await
+    .unwrap_or(None);
+
+    let dns_mode_label = format!("{:?}", cfg.dns_mode).to_lowercase();
+    drop(cfg);
+
+    Ok(Json(serde_json::json!({
+        "ip":       ip,
+        "ptr":      ptr,
+        "dns_mode": dns_mode_label,
+    }))
+    .into_response())
 }
 
 // ---------------------------------------------------------------------------
