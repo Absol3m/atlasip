@@ -19,6 +19,8 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use crate::config::AppConfig;
+use crate::http::{self, AppState};
 use windows_service::{
     service::{
         ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl,
@@ -176,17 +178,17 @@ fn run_service_inner() -> Result<()> {
         .build()
         .context("failed to build tokio runtime")?
         .block_on(async move {
-            let cfg = atlasip::config::AppConfig::load(
-                atlasip::config::AppConfig::default_path(),
+            let cfg = AppConfig::load(
+                AppConfig::default_path(),
             )
             .unwrap_or_default();
 
             let addr = cfg.listen_addr.clone();
 
-            let state  = atlasip::http::AppState::with_config(cfg);
-            let router = atlasip::http::build_router(state);
+            let state  = AppState::with_config(cfg);
+            let router = http::build_router(state);
 
-            let listener = tokio::net::TcpListener::bind(&addr)
+            let listener = tokio::net::TcpListener::bind(addr.clone())
                 .await
                 .expect("AtlasIP: failed to bind address");
 
@@ -225,15 +227,24 @@ pub fn run_dispatcher() -> Result<()> {
     // The `ffi_service_main` symbol is defined by `define_windows_service!`
     // in `src/main.rs`.  We reference it by name here via a type alias so the
     // linker can resolve it.  The actual function is generated at the call site.
-    windows_service::service_dispatcher::start(SERVICE_NAME, ffi_service_main)
+    windows_service::service_dispatcher::start(SERVICE_NAME, service_main_wrapper)
         .context("service dispatcher failed — was the binary invoked by the SCM?")?;
     Ok(())
 }
 
 // Forward declaration so this module can compile; the real symbol is emitted
 // by `define_windows_service!` in main.rs.
-extern "system" {
+unsafe extern "system" {
     fn ffi_service_main(num_service_args: u32, service_arg_vectors: *mut *mut u16);
+}
+
+// Safe wrapper required by service_dispatcher::start — Rust 2024 marks
+// extern "system" symbols as unsafe, but the dispatcher expects a safe fn.
+extern "system" fn service_main_wrapper(
+    num_service_args: u32,
+    service_arg_vectors: *mut *mut u16,
+) {
+    unsafe { ffi_service_main(num_service_args, service_arg_vectors); }
 }
 
 // ---------------------------------------------------------------------------

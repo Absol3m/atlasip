@@ -56,5 +56,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Windows service management (spec §6)
 # Only compiled on Windows — no impact on macOS / Linux builds.
+[features]
+ui = []
+
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.6"
