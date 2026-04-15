@@ -13,6 +13,7 @@ pub mod linux;
 pub mod macos;
 
 #[cfg(windows)]
+#[cfg(not(feature = "ui"))]
 pub mod windows;
 
 // ---------------------------------------------------------------------------
