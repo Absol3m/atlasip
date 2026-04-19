@@ -406,7 +406,7 @@ async fn lookup_ip(
     if !utils::is_ip(&ip) {
         return Ok((
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(serde_json::json!({ "error": format!("'{ip}' is not a valid IP address") })),
+            Json(serde_json::json!({ "error": crate::i18n::t("errors.error.invalid_ip_format").replace("{ip}", &ip) })),
         )
             .into_response());
     }
@@ -416,7 +416,7 @@ async fn lookup_ip(
     if !utils::is_public_ip(&ip_addr) {
         return Ok((
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(serde_json::json!({ "error": "Private or reserved IP not allowed" })),
+            Json(serde_json::json!({ "error": crate::i18n::t("errors.error.private_ip") })),
         )
             .into_response());
     }
@@ -454,7 +454,7 @@ async fn lookup_hostname(
                 return Ok((
                     StatusCode::UNPROCESSABLE_ENTITY,
                     Json(serde_json::json!({
-                        "error": "Hostname resolves to a private or reserved IP"
+                        "error": crate::i18n::t("errors.error.private_hostname")
                     })),
                 )
                     .into_response());
@@ -582,7 +582,7 @@ async fn update_config(
 ) -> Result<impl IntoResponse, ApiError> {
     let mut config = state.config.write().await;
 
-    if let Some(v) = body.language              { config.language              = v; }
+    if let Some(v) = body.locale                { config.locale                = v; }
     if let Some(v) = body.proxy_type            { config.proxy_type            = v; }
     if let Some(v) = body.proxy_host            { config.proxy_host            = v; }
     if let Some(v) = body.proxy_port            { config.proxy_port            = v; }
@@ -643,7 +643,7 @@ async fn reverse_ip(
     if ip.parse::<std::net::IpAddr>().is_err() {
         return Ok((
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(serde_json::json!({ "error": format!("Invalid IP address: '{ip}'") })),
+            Json(serde_json::json!({ "error": crate::i18n::t("errors.error.invalid_ip_reverse").replace("{ip}", &ip) })),
         )
             .into_response());
     }
@@ -748,7 +748,7 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert_eq!(json["language"], "fr");
+        assert_eq!(json["locale"], "en-US");
         assert_eq!(json["dns_timeout_ms"], 2000);
     }
 
@@ -757,7 +757,7 @@ mod tests {
         let state = test_state();
         let app = build_router(state.clone());
 
-        let body = serde_json::json!({ "language": "en", "dns_timeout_ms": 1000 });
+        let body = serde_json::json!({ "locale": "en-US", "dns_timeout_ms": 1000 });
         let req = Request::builder()
             .method("POST")
             .uri("/config")
@@ -768,7 +768,7 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert_eq!(json["language"], "en");
+        assert_eq!(json["locale"], "en-US");
         assert_eq!(json["dns_timeout_ms"], 1000);
         // Other fields must remain unchanged.
         assert_eq!(json["proxy_type"], "none");

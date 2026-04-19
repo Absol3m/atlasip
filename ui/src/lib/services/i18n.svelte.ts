@@ -1,42 +1,54 @@
-import en, { type LocaleKey } from '$lib/locales/en';
-import fr from '$lib/locales/fr';
+import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
+import enUsUi      from '../../../../i18n/en-US/ui.json';
+import enUsErrors  from '../../../../i18n/en-US/errors.json';
+import frFrUi      from '../../../../i18n/fr-FR/ui.json';
+import frFrErrors  from '../../../../i18n/fr-FR/errors.json';
 
-type Locale = 'en' | 'fr';
+type TranslationMap = Record<string, string>;
 
-const LS_KEY = 'atlasip.locale';
-const LOCALES: Record<Locale, Record<string, string>> = { en, fr };
+const TRANSLATIONS: Record<string, TranslationMap> = {
+  'en-US': { ...(enUsUi as TranslationMap), ...(enUsErrors as TranslationMap) },
+  'fr-FR': { ...(frFrUi as TranslationMap), ...(frFrErrors as TranslationMap) },
+};
 
-class I18nStore {
-  locale = $state<Locale>('en');
+const FALLBACK = TRANSLATIONS['en-US'];
 
-  /** Translate a key, substituting `{n}`, `{key}` placeholders. */
-  t(key: LocaleKey, params?: Record<string, string | number>): string {
-    const dict = LOCALES[this.locale];
-    let msg: string = dict[key] ?? (LOCALES.en[key] as string) ?? key;
-    if (params) {
-      for (const [k, v] of Object.entries(params)) {
-        msg = msg.replaceAll(`{${k}}`, String(v));
-      }
+interface AppConfig {
+  locale?: string;
+}
+
+class I18n {
+  locale  = $state('en-US');
+  version = $state('');
+  private map = $state<TranslationMap>(FALLBACK);
+
+  async init(): Promise<void> {
+    const [cfg, ver] = await Promise.allSettled([
+      invoke<AppConfig>('get_config'),
+      getVersion(),
+    ]);
+    if (cfg.status === 'fulfilled') {
+      this.setLocale(cfg.value.locale ?? 'en-US');
     }
-    return msg;
+    if (ver.status === 'fulfilled') {
+      this.version = ver.value;
+    }
   }
 
-  /** Pluralised helper — uses `{n}` key. */
-  tn(keyOne: LocaleKey, keyMany: LocaleKey, n: number): string {
-    return this.t(n === 1 ? keyOne : keyMany, { n });
+  setLocale(loc: string): void {
+    this.locale = loc;
+    this.map = TRANSLATIONS[loc] ?? FALLBACK;
   }
 
-  setLocale(l: Locale) {
-    this.locale = l;
-    try { localStorage.setItem(LS_KEY, l); } catch { /* private browsing */ }
+  t(key: string): string {
+    return this.map[key] ?? FALLBACK[key] ?? key;
   }
 
-  init() {
-    try {
-      const saved = localStorage.getItem(LS_KEY) as Locale | null;
-      if (saved && saved in LOCALES) this.locale = saved;
-    } catch { /* SSR / private browsing */ }
+  tn(singular: string, plural: string, n: number): string {
+    const key = n === 1 ? singular : plural;
+    return this.t(key).replace('{n}', String(n));
   }
 }
 
-export const i18n = new I18nStore();
+export const i18n = new I18n();

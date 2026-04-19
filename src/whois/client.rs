@@ -51,8 +51,8 @@ pub fn detect_rate_limit(raw: &str) -> Option<String> {
                         .iter()
                         .any(|t| l.to_ascii_lowercase().contains(t))
             })
-            .unwrap_or("Rate limited or access denied")
-            .to_owned();
+            .map(str::to_owned)
+            .unwrap_or_else(|| crate::i18n::t("errors.error.whois.rate_limit_detected"));
         return Some(reason);
     }
     None
@@ -134,7 +134,7 @@ impl WhoisClient {
                 Ok(detailed) if has_useful_content(&detailed) => {
                     // Check for rate-limit before returning.
                     if let Some(reason) = detect_rate_limit(&detailed) {
-                        anyhow::bail!("WHOIS rate limit from {}: {}", refer_server, reason);
+                        anyhow::bail!("{}", crate::i18n::t("errors.error.whois.rate_limit").replace("{server}", &refer_server).replace("{reason}", &reason));
                     }
                     return Ok(WhoisResult {
                         raw: detailed,
@@ -161,20 +161,20 @@ impl WhoisClient {
 
         let mut stream = timeout(deadline, TcpStream::connect(&addr))
             .await
-            .with_context(|| format!("WHOIS TCP connection timed out: {addr}"))?
-            .with_context(|| format!("Cannot connect to WHOIS server: {addr}"))?;
+            .with_context(|| crate::i18n::t("errors.error.whois.connect_timeout").replace("{addr}", &addr))?
+            .with_context(|| crate::i18n::t("errors.error.whois.connect_failed").replace("{addr}", &addr))?;
 
         let request = format!("{query}\r\n");
         timeout(deadline, stream.write_all(request.as_bytes()))
             .await
-            .context("WHOIS write timed out")?
-            .context("Failed to send WHOIS query")?;
+            .context(crate::i18n::t("errors.error.whois.write_timeout"))?
+            .context(crate::i18n::t("errors.error.whois.write_failed"))?;
 
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
         timeout(deadline, stream.read_to_end(&mut buf))
             .await
-            .context("WHOIS read timed out")?
-            .context("Failed to read WHOIS response")?;
+            .context(crate::i18n::t("errors.error.whois.read_timeout"))?
+            .context(crate::i18n::t("errors.error.whois.read_failed"))?;
 
         buf.truncate(MAX_RESPONSE_BYTES);
 

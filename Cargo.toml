@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name        = "atlasip"
-version     = "0.5.0-alpha"
+version     = "0.6.0"
 edition     = "2024"
 description = "Modern IP analysis tool — backend for AtlasIP"
 license     = "Apache-2.0"

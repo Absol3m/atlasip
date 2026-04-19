@@ -379,7 +379,7 @@ impl RdapClient {
             .timeout(Duration::from_millis(timeout_ms))
             .user_agent("AtlasIP/0.1 (RDAP client; https://github.com/atlasip)")
             .build()
-            .context("Failed to build RDAP HTTP client")?;
+            .context(crate::i18n::t("errors.error.rdap.client_build"))?;
         Ok(Self { http, timeout_ms })
     }
 
@@ -432,16 +432,16 @@ impl RdapClient {
             .get(bootstrap_url)
             .send()
             .await
-            .with_context(|| format!("Failed to fetch IANA bootstrap: {bootstrap_url}"))?
+            .with_context(|| crate::i18n::t("errors.error.rdap.bootstrap_fetch").replace("{url}", bootstrap_url))?
             .error_for_status()
-            .with_context(|| format!("IANA bootstrap returned error: {bootstrap_url}"))?
+            .with_context(|| crate::i18n::t("errors.error.rdap.bootstrap_error").replace("{url}", bootstrap_url))?
             .json()
             .await
-            .context("Failed to parse IANA bootstrap JSON")?;
+            .context(crate::i18n::t("errors.error.rdap.bootstrap_parse"))?;
 
         let services = body["services"]
             .as_array()
-            .context("Invalid IANA bootstrap: missing 'services' array")?;
+            .context(crate::i18n::t("errors.error.rdap.bootstrap_invalid"))?;
 
         for service in services {
             let entry = match service.as_array() {
@@ -465,7 +465,7 @@ impl RdapClient {
                     .first()
                     .and_then(|u| u.as_str())
                     .with_context(|| {
-                        format!("Bootstrap entry for '{target}' has no RDAP URL")
+                        crate::i18n::t("errors.error.rdap.no_url").replace("{target}", target)
                     })?;
                 // Ensure the base URL ends with '/'.
                 let base = if raw_url.ends_with('/') {
@@ -478,7 +478,10 @@ impl RdapClient {
         }
 
         anyhow::bail!(
-            "No authoritative RDAP server found for '{target}' in {bootstrap_url}"
+            "{}",
+            crate::i18n::t("errors.error.rdap.no_server")
+                .replace("{target}", target)
+                .replace("{url}", bootstrap_url)
         )
     }
 
@@ -493,12 +496,12 @@ impl RdapClient {
             )
             .send()
             .await
-            .with_context(|| format!("RDAP request failed: {url}"))?
+            .with_context(|| crate::i18n::t("errors.error.rdap.request_failed").replace("{url}", url))?
             .error_for_status()
-            .with_context(|| format!("RDAP server returned an error for: {url}"))?
+            .with_context(|| crate::i18n::t("errors.error.rdap.server_error").replace("{url}", url))?
             .json()
             .await
-            .with_context(|| format!("Failed to parse RDAP JSON from: {url}"))?;
+            .with_context(|| crate::i18n::t("errors.error.rdap.parse_failed").replace("{url}", url))?;
 
         Ok(RdapResult {
             json,

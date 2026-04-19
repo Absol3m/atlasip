@@ -1,0 +1,17 @@
+{
+  "windows.installed": "Service AtlasIP install\u00e9 avec succ\u00e8s.",
+  "windows.hint.start": "  D\u00e9marrer  : sc start AtlasIPService",
+  "windows.hint.stop": "  Arr\u00eater   : sc stop  AtlasIPService",
+  "windows.hint.remove": "  Supprimer : atlasip.exe uninstall-service",
+  "windows.uninstalled": "Service AtlasIP d\u00e9sinstall\u00e9.",
+  "windows.error": "Erreur du service AtlasIP\u00a0: {error}",
+  "linux.installed": "Service AtlasIP install\u00e9 et d\u00e9marr\u00e9.",
+  "linux.hint.status": "  Statut   : systemctl status atlasip",
+  "linux.hint.logs": "  Journaux : journalctl -u atlasip -f",
+  "linux.uninstalled": "Service AtlasIP d\u00e9sinstall\u00e9.",
+  "macos.installed": "AtlasIP {mode} install\u00e9 et charg\u00e9.",
+  "macos.hint.status": "  Statut : launchctl list com.atlasip.service",
+  "macos.hint.plist": "  Plist  : {path}",
+  "macos.not_found": "Aucun plist trouv\u00e9 \u00e0 {path} \u2014 rien \u00e0 supprimer.",
+  "macos.uninstalled": "Service AtlasIP d\u00e9sinstall\u00e9."
+}

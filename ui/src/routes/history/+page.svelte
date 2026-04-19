@@ -31,12 +31,12 @@
 <div class="history-page">
   <div class="page-header">
     <div class="header-left">
-      <h1 class="page-title"><Clock size={16} /> History</h1>
-      <p class="page-sub">{historyStore.entries.length} analysis{historyStore.entries.length !== 1 ? 'es' : ''}</p>
+      <h1 class="page-title"><Clock size={16} /> {i18n.t('history.title')}</h1>
+      <p class="page-sub">{i18n.tn('history.count.one', 'history.count.many', historyStore.entries.length)}</p>
     </div>
     {#if historyStore.entries.length > 0}
-      <button class="clear-btn" onclick={() => historyStore.clear()} title="Clear history">
-        <Trash2 size={14} /> Clear
+      <button class="clear-btn" onclick={() => historyStore.clear()} title={i18n.t('history.clear.title')}>
+        <Trash2 size={14} /> {i18n.t('history.clear')}
       </button>
     {/if}
   </div>
@@ -44,7 +44,7 @@
   {#if historyStore.entries.length === 0}
     <div class="empty">
       <Clock size={40} strokeWidth={1.2} />
-      <p>No analysis in history.</p>
+      <p>{i18n.t('history.empty')}</p>
     </div>
   {:else}
     <div class="list">
@@ -65,16 +65,16 @@
             <div class="entry-meta">
               <span class="meta-date">{formatDate(entry.timestamp)}</span>
               <span class="meta-sep">·</span>
-              <span class="meta-count">{entry.resultCount} result{entry.resultCount !== 1 ? 's' : ''}</span>
+              <span class="meta-count">{i18n.tn('history.result.one', 'history.result.many', entry.resultCount)}</span>
             </div>
           </div>
           <div class="entry-actions">
-            <button class="rerun-btn" title="Rerun analysis"
+            <button class="rerun-btn" title={i18n.t('history.rerun.title')}
               onclick={(e) => { e.stopPropagation(); rerun(entry.targets); }}
             >
-              <Search size={13} /> Rerun
+              <Search size={13} /> {i18n.t('history.rerun')}
             </button>
-            <button class="del-btn" title="Delete"
+            <button class="del-btn" title={i18n.t('history.delete')}
               onclick={(e) => { e.stopPropagation(); historyStore.remove(entry.id); }}
             >
               <X size={13} />

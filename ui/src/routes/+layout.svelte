@@ -5,6 +5,7 @@
   import { historyStore } from '$lib/stores/history.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Toast from '$lib/components/Toast.svelte';
+  import AboutModal from '$lib/components/AboutModal.svelte';
 
   let { children } = $props();
 
@@ -26,6 +27,7 @@
     {@render children()}
   </div>
   <Toast />
+  <AboutModal />
 </div>
 
 <style>

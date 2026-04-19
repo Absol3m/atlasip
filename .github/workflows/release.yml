@@ -90,7 +90,7 @@ jobs:
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: atlasip-macos
+          name: atlasip-macos-arm64
           path: target/release/bundle/dmg/*.dmg
           if-no-files-found: warn
 
@@ -160,10 +160,10 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: ./dist
 
       - name: List artifacts
-        run: find artifacts -type f | sort
+        run: find ./dist -type f | sort
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -173,4 +173,4 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           generate_release_notes: true
-          files: artifacts/**/*
+          files: ./dist/**

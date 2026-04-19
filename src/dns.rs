@@ -85,26 +85,26 @@ fn ip_to_ptr_name(ip: &str) -> Option<String> {
 /// - `Err(_)`        — network / parse error.
 pub async fn reverse_dns_doh(ip: &str, endpoint: &str, timeout_ms: u64) -> Result<Option<String>> {
     let ptr_name = ip_to_ptr_name(ip)
-        .ok_or_else(|| anyhow::anyhow!("Invalid IP for PTR conversion: '{ip}'"))?;
+        .ok_or_else(|| anyhow::anyhow!("{}", crate::i18n::t("errors.error.dns.invalid_ip_ptr").replace("{ip}", ip)))?;
 
     let url = format!("{endpoint}?name={ptr_name}&type=PTR");
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
         .build()
-        .context("failed to build DoH HTTP client")?;
+        .context(crate::i18n::t("errors.error.dns.doh_client_build"))?;
 
     let response = client
         .get(&url)
         .header("Accept", "application/dns-json")
         .send()
         .await
-        .with_context(|| format!("DoH request failed for '{ip}'"))?;
+        .with_context(|| crate::i18n::t("errors.error.dns.doh_request").replace("{ip}", ip))?;
 
     let body: DohResponse = response
         .json()
         .await
-        .context("failed to parse DoH JSON response")?;
+        .context(crate::i18n::t("errors.error.dns.doh_parse"))?;
 
     let ptr = body
         .answer
@@ -229,13 +229,13 @@ pub async fn resolve_hostname(hostname: &str, timeout_ms: u64) -> Result<String>
 
     let lookup = timeout(deadline, resolver.lookup_ip(hostname))
         .await
-        .context("DNS forward lookup timed out")?
-        .with_context(|| format!("DNS forward lookup failed for '{hostname}'"))?;
+        .context(crate::i18n::t("errors.error.dns.forward_timeout"))?
+        .with_context(|| crate::i18n::t("errors.error.dns.forward_failed").replace("{hostname}", hostname))?;
 
     let addr = lookup
         .iter()
         .next()
-        .ok_or_else(|| anyhow::anyhow!("No address record found for '{hostname}'"))?;
+        .ok_or_else(|| anyhow::anyhow!("{}", crate::i18n::t("errors.error.dns.no_address").replace("{hostname}", hostname)))?;
 
     Ok(addr.to_string())
 }
@@ -249,14 +249,14 @@ pub async fn resolve_hostname(hostname: &str, timeout_ms: u64) -> Result<String>
 pub async fn reverse_lookup(ip: &str, timeout_ms: u64) -> Result<Option<String>> {
     let addr: IpAddr = ip
         .parse()
-        .with_context(|| format!("Invalid IP address: '{ip}'"))?;
+        .with_context(|| crate::i18n::t("errors.error.invalid_ip_reverse").replace("{ip}", ip))?;
 
     let resolver = build_resolver(timeout_ms);
     let deadline = Duration::from_millis(timeout_ms * 2);
 
     let result = timeout(deadline, resolver.reverse_lookup(addr))
         .await
-        .context("DNS reverse lookup timed out")?;
+        .context(crate::i18n::t("errors.error.dns.reverse_timeout"))?;
 
     match result {
         Ok(lookup) => {
@@ -270,7 +270,7 @@ pub async fn reverse_lookup(ip: &str, timeout_ms: u64) -> Result<Option<String>>
             ResolveErrorKind::NoRecordsFound { .. } => Ok(None),
             // Any other error (timeout, SERVFAIL, …) is propagated.
             _ => Err(anyhow::Error::new(e)
-                .context(format!("DNS reverse lookup failed for '{ip}'"))),
+                .context(crate::i18n::t("errors.error.dns.reverse_failed").replace("{ip}", ip))),
         },
     }
 }
@@ -332,7 +332,7 @@ pub async fn full_dns_lookup(hostname: &str, timeout_ms: u64) -> DnsLookupResult
             errors,
         },
         Err(_) => {
-            errors.push(format!("DNS lookup timed out for '{hostname}'"));
+            errors.push(crate::i18n::t("errors.error.dns.lookup_timeout").replace("{hostname}", hostname));
             DnsLookupResult {
                 resolved_ip: None,
                 ptr: None,

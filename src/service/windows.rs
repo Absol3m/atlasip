@@ -73,10 +73,10 @@ pub fn install() -> Result<()> {
         .set_description(SERVICE_DESCRIPTION)
         .context("failed to set service description")?;
 
-    println!("AtlasIP Service installed successfully.");
-    println!("  Start  : sc start {SERVICE_NAME}");
-    println!("  Stop   : sc stop  {SERVICE_NAME}");
-    println!("  Remove : atlasip.exe uninstall-service");
+    println!("{}", crate::i18n::t("service.windows.installed"));
+    println!("{}", crate::i18n::t("service.windows.hint.start"));
+    println!("{}", crate::i18n::t("service.windows.hint.stop"));
+    println!("{}", crate::i18n::t("service.windows.hint.remove"));
     Ok(())
 }
 
@@ -118,7 +118,7 @@ pub fn uninstall() -> Result<()> {
     }
 
     service.delete().context("failed to delete service")?;
-    println!("AtlasIP Service uninstalled.");
+    println!("{}", crate::i18n::t("service.windows.uninstalled"));
     Ok(())
 }
 
@@ -139,7 +139,7 @@ pub fn uninstall() -> Result<()> {
 pub fn service_main(_args: Vec<OsString>) {
     if let Err(e) = run_service_inner() {
         // Log to Windows Event Log as best-effort.
-        eprintln!("AtlasIP service error: {e}");
+        eprintln!("{}", crate::i18n::t("service.windows.error").replace("{error}", &e.to_string()));
     }
 }
 
