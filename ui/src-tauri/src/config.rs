@@ -102,9 +102,11 @@ pub struct AppConfig {
     pub locale: String,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default)]
+    pub autostart: bool,
 }
 
-fn default_locale() -> String { "en".into() }
+fn default_locale() -> String { "en-US".into() }
 fn default_theme()  -> String { "system".into() }
 
 // ── File path ─────────────────────────────────────────────────────────────────

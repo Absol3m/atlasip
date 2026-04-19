@@ -141,7 +141,7 @@ pub struct AppConfig {
     pub whois_server_override: String,
 
     // ── Export / UI (kept for http.rs / models.rs compatibility) ──────────
-    pub language: String,
+    pub locale: String,
     pub default_export_format: String,
     pub csv_with_header: bool,
 
@@ -200,7 +200,7 @@ impl Default for AppConfig {
             pause_every: 0,
             pause_duration_ms: 0,
             whois_server_override: String::new(),
-            language: "fr".to_string(),
+            locale: "en-US".to_string(),
             default_export_format: "csv".to_string(),
             csv_with_header: true,
             proxy_type: "none".to_string(),
@@ -379,7 +379,7 @@ mod tests {
             pause_every = 10
             pause_duration_ms = 500
             whois_server_override = "whois.example.com"
-            language = "en"
+            locale = "en-US"
             default_export_format = "tsv"
             csv_with_header = false
             proxy_type = "none"

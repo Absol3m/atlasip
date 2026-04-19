@@ -55,9 +55,9 @@ pub fn install(user_mode: bool) -> Result<()> {
     launchctl(&["load", "-w", plist_path.to_str().unwrap()])?;
 
     let mode_label = if user_mode { "user agent" } else { "system daemon" };
-    println!("AtlasIP {mode_label} installed and loaded.");
-    println!("  Status  : launchctl list {LABEL}");
-    println!("  Plist   : {}", plist_path.display());
+    println!("{}", crate::i18n::t("service.macos.installed").replace("{mode}", mode_label));
+    println!("{}", crate::i18n::t("service.macos.hint.status"));
+    println!("{}", crate::i18n::t("service.macos.hint.plist").replace("{path}", &plist_path.display().to_string()));
     Ok(())
 }
 
@@ -72,10 +72,10 @@ pub fn uninstall(user_mode: bool) -> Result<()> {
         fs::remove_file(&plist_path)
             .with_context(|| format!("failed to remove {}", plist_path.display()))?;
     } else {
-        println!("No plist found at {} — nothing to remove.", plist_path.display());
+        println!("{}", crate::i18n::t("service.macos.not_found").replace("{path}", &plist_path.display().to_string()));
     }
 
-    println!("AtlasIP service uninstalled.");
+    println!("{}", crate::i18n::t("service.macos.uninstalled"));
     Ok(())
 }
 
@@ -200,7 +200,8 @@ mod tests {
     #[test]
     fn test_plist_path_user_mode() {
         // Should contain ~/Library/LaunchAgents
-        std::env::set_var("HOME", "/tmp/fake_home");
+        // SAFETY: single-threaded test environment; no concurrent reads of HOME.
+        unsafe { std::env::set_var("HOME", "/tmp/fake_home") };
         let path = plist_path(true).unwrap();
         assert!(path.to_str().unwrap().contains("LaunchAgents"));
         assert!(path.to_str().unwrap().contains("com.atlasip.service.plist"));

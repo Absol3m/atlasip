@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Search, Clock, Settings, Info, Moon, Sun, PanelLeftClose, PanelLeftOpen } from 'lucide-svelte';
+  import { Search, Clock, Settings, Moon, Sun, PanelLeftClose, PanelLeftOpen, Info } from 'lucide-svelte';
+  import { aboutModal } from '$lib/stores/about.svelte';
   import { theme } from '$lib/stores/app';
   import { i18n } from '$lib/services/i18n.svelte';
 
@@ -8,14 +9,12 @@
     href: string;
     labelKey: Parameters<typeof i18n.t>[0];
     icon: typeof Search;
-    enabled: boolean;
   }
 
   const links: NavLink[] = [
-    { href: '/lookup',   labelKey: 'nav.analysis', icon: Search,   enabled: true  },
-    { href: '/history',  labelKey: 'nav.history',  icon: Clock,    enabled: true  },
-    { href: '/settings', labelKey: 'nav.settings', icon: Settings, enabled: true  },
-    { href: '/about',    labelKey: 'nav.about',    icon: Info,     enabled: false },
+    { href: '/lookup',   labelKey: 'nav.analysis', icon: Search   },
+    { href: '/history',  labelKey: 'nav.history',  icon: Clock    },
+    { href: '/settings', labelKey: 'nav.settings', icon: Settings },
   ];
 
   let collapsed = $state(false);
@@ -31,50 +30,44 @@
 <aside class="sidebar" class:collapsed>
   <!-- Brand -->
   <div class="brand">
-    <span class="logo" aria-hidden="true"></span>
     {#if !collapsed}
+      <div class="collapse-wrap">
+        <button
+          class="collapse-btn"
+          onclick={() => (collapsed = true)}
+          aria-label="Collapse sidebar"
+          title="Collapse sidebar"
+        >
+          <PanelLeftClose size={15} />
+        </button>
+      </div>
+      <span class="logo" aria-hidden="true"></span>
       <span class="brand-name">ATLAS<span class="brand-dot">•</span>IP</span>
-    {/if}
-    <button
-      class="collapse-btn"
-      onclick={() => collapsed = !collapsed}
-      aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-    >
-      {#if collapsed}
+    {:else}
+      <button
+        class="expand-btn"
+        onclick={() => (collapsed = false)}
+        aria-label="Expand sidebar"
+        title="Expand sidebar"
+      >
         <PanelLeftOpen size={15} />
-      {:else}
-        <PanelLeftClose size={15} />
-      {/if}
-    </button>
+      </button>
+    {/if}
   </div>
 
   <!-- Navigation -->
   <nav class="nav" aria-label="Main navigation">
     {#each links as link}
-      {#if link.enabled}
-        <a
-          href={link.href}
-          class="nav-item"
-          class:active={isActive(link.href)}
-          aria-current={isActive(link.href) ? 'page' : undefined}
-          title={collapsed ? i18n.t(link.labelKey) : undefined}
-        >
-          <link.icon size={16} />
-          {#if !collapsed}<span>{i18n.t(link.labelKey)}</span>{/if}
-        </a>
-      {:else}
-        <span
-          class="nav-item nav-item--disabled"
-          title={collapsed ? i18n.t(link.labelKey) : 'Coming soon'}
-        >
-          <link.icon size={16} />
-          {#if !collapsed}
-            <span>{i18n.t(link.labelKey)}</span>
-            <span class="badge-soon">soon</span>
-          {/if}
-        </span>
-      {/if}
+      <a
+        href={link.href}
+        class="nav-item"
+        class:active={isActive(link.href)}
+        aria-current={isActive(link.href) ? 'page' : undefined}
+        title={collapsed ? i18n.t(link.labelKey) : undefined}
+      >
+        <link.icon size={16} />
+        {#if !collapsed}<span>{i18n.t(link.labelKey)}</span>{/if}
+      </a>
     {/each}
   </nav>
 
@@ -95,10 +88,12 @@
       {/if}
     </button>
 
-    <div class="version" title="v{i18n.t('app.version')}">
-      <Info size={13} />
-      {#if !collapsed}<span>v{i18n.t('app.version')}</span>{/if}
-    </div>
+    {#if i18n.version}
+      <button class="version" onclick={aboutModal.show} title="v{i18n.version}">
+        <Info size={13} />
+        {#if !collapsed}<span>v{i18n.version}</span>{/if}
+      </button>
+    {/if}
   </div>
 </aside>
 
@@ -125,17 +120,69 @@
   .brand {
     display: flex;
     align-items: center;
-    gap: 10px;
     padding: 18px 12px 16px;
     border-bottom: 1px solid var(--color-border);
     min-height: 63px;
+    overflow: hidden;
   }
 
   .collapsed .brand {
-    flex-direction: column;
     justify-content: center;
-    padding: 10px 0;
-    gap: 6px;
+    padding: 16px 0;
+  }
+
+  /* Wrapper that slides in from the left on hover, pushing logo+name right */
+  .collapse-wrap {
+    max-width: 0;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    transition: max-width 0.18s ease;
+  }
+
+  .brand:hover .collapse-wrap {
+    max-width: 36px; /* 24px button + 8px right margin + 4px breathing room */
+  }
+
+  .collapse-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    margin-right: 8px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+  }
+
+  .collapse-btn:hover {
+    background: var(--color-hover);
+    color: var(--color-text);
+  }
+
+  .expand-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+  }
+
+  .expand-btn:hover {
+    background: var(--color-hover);
+    color: var(--color-text);
   }
 
   .logo {
@@ -153,6 +200,7 @@
   }
 
   .brand-name {
+    margin-left: 10px;
     flex: 1;
     font-size: 1.1rem;
     font-weight: 800;
@@ -167,31 +215,6 @@
 
   .brand-dot {
     color: var(--color-accent);
-  }
-
-  /* ── Collapse button ── */
-  .collapse-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    padding: 4px;
-    border: none;
-    border-radius: var(--radius-md);
-    background: none;
-    color: var(--color-text-muted);
-    cursor: pointer;
-    transition: background-color var(--transition-fast), color var(--transition-fast);
-    margin-left: auto;
-  }
-
-  .collapsed .collapse-btn {
-    margin-left: 0;
-  }
-
-  .collapse-btn:hover {
-    background: var(--color-hover);
-    color: var(--color-text);
   }
 
   /* ── Navigation ── */
@@ -234,23 +257,6 @@
   .nav-item.active {
     background: color-mix(in srgb, var(--color-accent) 12%, transparent);
     color: var(--color-accent);
-  }
-
-  .nav-item--disabled {
-    opacity: 0.42;
-    cursor: not-allowed;
-  }
-
-  .badge-soon {
-    margin-left: auto;
-    font-size: 9.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-text-muted);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    padding: 1px 5px;
   }
 
   /* ── Bottom ── */
@@ -300,7 +306,18 @@
     opacity: 0.6;
     white-space: nowrap;
     overflow: hidden;
-    cursor: default;
+    background: none;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    transition: opacity var(--transition-fast), background-color var(--transition-fast);
+  }
+
+  .version:hover {
+    opacity: 1;
+    background: var(--color-hover);
   }
 
   .collapsed .version {

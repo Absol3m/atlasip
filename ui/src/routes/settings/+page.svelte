@@ -5,10 +5,9 @@
   import Toggle from '$lib/components/Toggle.svelte';
   import { theme } from '$lib/stores/app';
   import { i18n } from '$lib/services/i18n.svelte';
-
   // ── Types ─────────────────────────────────────────────────────────────────
 
-  type LocaleSetting  = 'en' | 'fr';
+  type LocaleSetting  = 'en-US' | 'fr-FR';
   type ThemeSetting   = 'light' | 'dark' | 'system';
   type DnsResolver    = 'system' | 'cloudflare' | 'google' | 'quad9';
   type IpMode         = 'ipv4' | 'ipv6' | 'dual';
@@ -43,18 +42,20 @@
       count:    number;
       delay_ms: number;
     };
-    locale: string;
-    theme:  string;
+    locale:     string;
+    theme:      string;
+    autostart:  boolean;
   }
 
   // ── Locale ────────────────────────────────────────────────────────────────
 
   const LOCALE_LABELS: Record<LocaleSetting, string> = {
-    en: 'English',
-    fr: 'Français',
+    'en-US': 'English',
+    'fr-FR': 'Français',
   };
 
-  let localeSetting = $state<LocaleSetting>(i18n.locale as LocaleSetting);
+  let localeSetting = $state<LocaleSetting>('en-US');
+  let autostart     = $state(false);
 
   function onLocaleChange(e: Event) {
     localeSetting = (e.target as HTMLSelectElement).value as LocaleSetting;
@@ -104,13 +105,13 @@
   function validateMaxConnections() {
     const v = network.maxConnections;
     network.maxConnectionsError = (!Number.isInteger(v) || v < 1 || v > 100)
-      ? 'Must be between 1 and 100' : '';
+      ? i18n.t('settings.error.max_connections') : '';
   }
 
   function validateRetryDelay() {
     const v = network.retryDelay;
     network.retryDelayError = (!Number.isInteger(v) || v < 0 || v > 600_000)
-      ? 'Must be between 0 and 600000 ms' : '';
+      ? i18n.t('settings.error.retry_delay') : '';
   }
 
   // ── Retry Options ─────────────────────────────────────────────────────────
@@ -126,13 +127,13 @@
   function validateRetryCount() {
     const v = retry.count;
     retry.countError = (!Number.isInteger(v) || v < 1 || v > 10)
-      ? 'Must be between 1 and 10' : '';
+      ? i18n.t('settings.error.retry_count') : '';
   }
 
   function validateRetryDelayField() {
     const v = retry.delay;
     retry.delayError = (!Number.isInteger(v) || v < 0 || v > 600_000)
-      ? 'Must be between 0 and 600000 ms' : '';
+      ? i18n.t('settings.error.retry_delay_ms') : '';
   }
 
   // ── Timeouts ──────────────────────────────────────────────────────────────
@@ -173,17 +174,17 @@
     if (proxy.url) {
       const expected = PROXY_SCHEMES[proxy.type] + '://';
       if (!proxy.url.startsWith(expected)) {
-        proxy.urlError = `URL must start with ${expected}`;
+        proxy.urlError = i18n.t('settings.error.proxy_url_scheme').replace('{scheme}', expected);
       } else {
         try { new URL(proxy.url); proxy.urlError = ''; }
-        catch { proxy.urlError = 'Invalid URL'; }
+        catch { proxy.urlError = i18n.t('settings.error.proxy_url_invalid'); }
       }
     } else {
       proxy.urlError = '';
     }
     if (proxy.noProxy) {
       const parts = proxy.noProxy.split(',').map(s => s.trim());
-      proxy.noProxyError = parts.some(p => p === '') ? 'Invalid comma-separated list' : '';
+      proxy.noProxyError = parts.some(p => p === '') ? i18n.t('settings.error.no_proxy_list') : '';
     } else {
       proxy.noProxyError = '';
     }
@@ -219,8 +220,9 @@
         count:    retry.count,
         delay_ms: retry.delay,
       },
-      locale: localeSetting,
-      theme:  themeSetting,
+      locale:    localeSetting,
+      theme:     themeSetting,
+      autostart: autostart,
     };
   }
 
@@ -247,14 +249,14 @@
     retry.count   = cfg.retry.count;
     retry.delay   = cfg.retry.delay_ms;
 
-    if (cfg.locale === 'en' || cfg.locale === 'fr') {
+    if (cfg.locale === 'en-US' || cfg.locale === 'fr-FR') {
       localeSetting = cfg.locale;
-      i18n.setLocale(cfg.locale);
     }
     if (cfg.theme === 'light' || cfg.theme === 'dark' || cfg.theme === 'system') {
       themeSetting = cfg.theme as ThemeSetting;
       applyThemeSetting(cfg.theme as ThemeSetting);
     }
+    autostart = cfg.autostart ?? false;
   }
 
   // Guard: do not save while the initial load is being applied.
@@ -296,49 +298,49 @@
 
 <div class="settings-page">
   <div class="page-header">
-    <h1 class="page-title">Settings</h1>
+    <h1 class="page-title">{i18n.t('settings.title')}</h1>
   </div>
 
   <div class="sections">
 
     <section class="section">
-      <h2 class="section-title">Network</h2>
+      <h2 class="section-title">{i18n.t('settings.section.network')}</h2>
       <div class="section-body proxy-body">
 
         <div class="field-row">
-          <label class="field-label" for="dns-resolver">DNS resolver</label>
+          <label class="field-label" for="dns-resolver">{i18n.t('settings.field.dns_resolver')}</label>
           <div class="input-wrap">
             <select id="dns-resolver" class="field-select" bind:value={network.dnsResolver}>
-              <option value="system">System</option>
-              <option value="cloudflare">Cloudflare (1.1.1.1)</option>
-              <option value="google">Google (8.8.8.8)</option>
-              <option value="quad9">Quad9 (9.9.9.9)</option>
+              <option value="system">{i18n.t('settings.opt.dns.system')}</option>
+              <option value="cloudflare">{i18n.t('settings.opt.dns.cloudflare')}</option>
+              <option value="google">{i18n.t('settings.opt.dns.google')}</option>
+              <option value="quad9">{i18n.t('settings.opt.dns.quad9')}</option>
             </select>
-            <p class="field-hint">DNS server used to resolve hostnames during lookups.</p>
+            <p class="field-hint">{i18n.t('settings.hint.dns_resolver')}</p>
           </div>
         </div>
 
         <div class="field-row">
-          <label class="field-label" for="ip-mode">IP mode</label>
+          <label class="field-label" for="ip-mode">{i18n.t('settings.field.ip_mode')}</label>
           <div class="input-wrap">
             <select id="ip-mode" class="field-select" bind:value={network.ipMode}>
-              <option value="ipv4">IPv4 only</option>
-              <option value="ipv6">IPv6 only</option>
-              <option value="dual">Dual stack</option>
+              <option value="ipv4">{i18n.t('settings.opt.ip.ipv4')}</option>
+              <option value="ipv6">{i18n.t('settings.opt.ip.ipv6')}</option>
+              <option value="dual">{i18n.t('settings.opt.ip.dual')}</option>
             </select>
-            <p class="field-hint">Address family preference when opening connections.</p>
+            <p class="field-hint">{i18n.t('settings.hint.ip_mode')}</p>
           </div>
         </div>
 
         <div class="field-row">
-          <label class="field-label" for="pooling-enabled">Connection pooling</label>
+          <label class="field-label" for="pooling-enabled">{i18n.t('settings.field.pooling')}</label>
           <Toggle id="pooling-enabled" bind:checked={network.poolingEnabled} ariaLabel="Enable connection pooling" />
         </div>
-        <p class="field-hint section-hint">Reuse TCP connections across requests to reduce latency.</p>
+        <p class="field-hint section-hint">{i18n.t('settings.hint.pooling')}</p>
 
         {#if network.poolingEnabled}
           <div class="field-row">
-            <label class="field-label" for="max-connections">Max connections</label>
+            <label class="field-label" for="max-connections">{i18n.t('settings.field.max_connections')}</label>
             <div class="input-wrap">
               <input
                 id="max-connections"
@@ -353,33 +355,33 @@
               {#if network.maxConnectionsError}
                 <p class="field-error">{network.maxConnectionsError}</p>
               {:else}
-                <p class="field-hint">Maximum number of simultaneous open connections (1–100).</p>
+                <p class="field-hint">{i18n.t('settings.hint.max_connections')}</p>
               {/if}
             </div>
           </div>
         {/if}
 
         <div class="field-row">
-          <label class="field-label" for="keep-alive">Keep-alive</label>
+          <label class="field-label" for="keep-alive">{i18n.t('settings.field.keep_alive')}</label>
           <Toggle id="keep-alive" bind:checked={network.keepAlive} ariaLabel="Enable keep-alive" />
         </div>
-        <p class="field-hint section-hint">Send TCP keep-alive probes to detect stale connections.</p>
+        <p class="field-hint section-hint">{i18n.t('settings.hint.keep_alive')}</p>
 
         <div class="field-row">
-          <label class="field-label" for="retry-strategy">Retry strategy</label>
+          <label class="field-label" for="retry-strategy">{i18n.t('settings.field.retry_strategy')}</label>
           <div class="input-wrap">
             <select id="retry-strategy" class="field-select" bind:value={network.retryStrategy}>
-              <option value="none">None</option>
-              <option value="linear">Linear</option>
-              <option value="exponential">Exponential</option>
+              <option value="none">{i18n.t('settings.opt.retry.none')}</option>
+              <option value="linear">{i18n.t('settings.opt.retry.linear')}</option>
+              <option value="exponential">{i18n.t('settings.opt.retry.exponential')}</option>
             </select>
-            <p class="field-hint">Algorithm used to space out retries after a failed request.</p>
+            <p class="field-hint">{i18n.t('settings.hint.retry_strategy')}</p>
           </div>
         </div>
 
         {#if network.retryStrategy !== 'none'}
           <div class="field-row">
-            <label class="field-label" for="retry-delay">Retry delay</label>
+            <label class="field-label" for="retry-delay">{i18n.t('settings.field.retry_delay')}</label>
             <div class="input-wrap">
               <input
                 id="retry-delay"
@@ -394,7 +396,7 @@
               {#if network.retryDelayError}
                 <p class="field-error">{network.retryDelayError}</p>
               {:else}
-                <p class="field-hint">Base delay in milliseconds between retries (0–600000).</p>
+                <p class="field-hint">{i18n.t('settings.hint.retry_delay')}</p>
               {/if}
             </div>
           </div>
@@ -404,17 +406,17 @@
     </section>
 
     <section class="section">
-      <h2 class="section-title">Proxy</h2>
+      <h2 class="section-title">{i18n.t('settings.section.proxy')}</h2>
       <div class="section-body proxy-body">
 
         <div class="field-row">
-          <label class="field-label" for="proxy-enabled">Enable proxy</label>
+          <label class="field-label" for="proxy-enabled">{i18n.t('settings.field.proxy_enabled')}</label>
           <Toggle id="proxy-enabled" bind:checked={proxy.enabled} ariaLabel="Enable proxy" />
         </div>
 
         {#if proxy.enabled}
           <div class="field-row">
-            <label class="field-label" for="proxy-type">Proxy type</label>
+            <label class="field-label" for="proxy-type">{i18n.t('settings.field.proxy_type')}</label>
             <div class="input-wrap">
               <select
                 id="proxy-type"
@@ -431,7 +433,7 @@
           </div>
 
           <div class="field-row">
-            <label class="field-label" for="proxy-url">Proxy URL</label>
+            <label class="field-label" for="proxy-url">{i18n.t('settings.field.proxy_url')}</label>
             <div class="input-wrap">
               <input
                 id="proxy-url"
@@ -449,7 +451,7 @@
           </div>
 
           <div class="field-row">
-            <label class="field-label" for="proxy-noproxy">No-proxy domains</label>
+            <label class="field-label" for="proxy-noproxy">{i18n.t('settings.field.no_proxy')}</label>
             <div class="input-wrap">
               <input
                 id="proxy-noproxy"
@@ -463,7 +465,7 @@
               {#if proxy.noProxyError}
                 <p class="field-error">{proxy.noProxyError}</p>
               {:else}
-                <p class="field-hint">Comma-separated list of hosts to exclude from the proxy.</p>
+                <p class="field-hint">{i18n.t('settings.hint.no_proxy')}</p>
               {/if}
             </div>
           </div>
@@ -473,36 +475,36 @@
     </section>
 
     <section class="section">
-      <h2 class="section-title">Timeouts</h2>
+      <h2 class="section-title">{i18n.t('settings.section.timeouts')}</h2>
       <div class="section-body timeouts-body">
         <HybridDurationInput
-          label="Global timeout"
-          description="Maximum total time allowed for a full lookup operation."
+          label={i18n.t('settings.field.timeout_global')}
+          description={i18n.t('settings.hint.timeout_global')}
           bind:value={timeouts.global}
         />
         <HybridDurationInput
-          label="Request timeout"
-          description="Maximum time allowed for a single HTTP request."
+          label={i18n.t('settings.field.timeout_request')}
+          description={i18n.t('settings.hint.timeout_request')}
           bind:value={timeouts.request}
         />
         <HybridDurationInput
-          label="DNS timeout"
-          description="Maximum time allowed for a DNS resolution."
+          label={i18n.t('settings.field.timeout_dns')}
+          description={i18n.t('settings.hint.timeout_dns')}
           bind:value={timeouts.dns}
         />
         <HybridDurationInput
-          label="GeoIP timeout"
-          description="Maximum time allowed for a GeoIP lookup."
+          label={i18n.t('settings.field.timeout_geoip')}
+          description={i18n.t('settings.hint.timeout_geoip')}
           bind:value={timeouts.geoip}
         />
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Theme</h2>
+      <h2 class="section-title">{i18n.t('settings.section.theme')}</h2>
       <div class="section-body proxy-body">
         <div class="field-row">
-          <label class="field-label" for="theme-select">Appearance</label>
+          <label class="field-label" for="theme-select">{i18n.t('settings.field.appearance')}</label>
           <div class="input-wrap">
             <select
               id="theme-select"
@@ -510,21 +512,21 @@
               value={themeSetting}
               onchange={onThemeChange}
             >
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-              <option value="system">System</option>
+              <option value="light">{i18n.t('settings.opt.theme.light')}</option>
+              <option value="dark">{i18n.t('settings.opt.theme.dark')}</option>
+              <option value="system">{i18n.t('settings.opt.theme.system')}</option>
             </select>
-            <p class="field-hint">Controls the colour scheme of the application.</p>
+            <p class="field-hint">{i18n.t('settings.hint.appearance')}</p>
           </div>
         </div>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Language</h2>
+      <h2 class="section-title">{i18n.t('settings.section.language')}</h2>
       <div class="section-body proxy-body">
         <div class="field-row">
-          <label class="field-label" for="locale-select">Language</label>
+          <label class="field-label" for="locale-select">{i18n.t('settings.field.language')}</label>
           <div class="input-wrap">
             <select
               id="locale-select"
@@ -536,25 +538,36 @@
                 <option {value}>{label}</option>
               {/each}
             </select>
-            <p class="field-hint">Controls the display language of the application.</p>
+            <p class="field-hint">{i18n.t('settings.hint.language')}</p>
           </div>
         </div>
       </div>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Retry Options</h2>
+      <h2 class="section-title">{i18n.t('settings.section.behavior')}</h2>
+      <div class="section-body proxy-body">
+        <div class="field-row">
+          <label class="field-label" for="autostart">{i18n.t('settings.field.autostart')}</label>
+          <Toggle id="autostart" bind:checked={autostart} ariaLabel="Launch at startup" />
+        </div>
+        <p class="field-hint section-hint">{i18n.t('settings.hint.autostart')}</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">{i18n.t('settings.section.retry')}</h2>
       <div class="section-body proxy-body">
 
         <div class="field-row">
-          <label class="field-label" for="retry-enabled">Enable auto-retry</label>
+          <label class="field-label" for="retry-enabled">{i18n.t('settings.field.retry_enabled')}</label>
           <Toggle id="retry-enabled" bind:checked={retry.enabled} ariaLabel="Enable auto-retry" />
         </div>
-        <p class="field-hint section-hint">Automatically retry failed requests without user intervention.</p>
+        <p class="field-hint section-hint">{i18n.t('settings.hint.retry_enabled')}</p>
 
         {#if retry.enabled}
           <div class="field-row">
-            <label class="field-label" for="retry-count">Retry count</label>
+            <label class="field-label" for="retry-count">{i18n.t('settings.field.retry_count')}</label>
             <div class="input-wrap">
               <input
                 id="retry-count"
@@ -569,13 +582,13 @@
               {#if retry.countError}
                 <p class="field-error">{retry.countError}</p>
               {:else}
-                <p class="field-hint">Number of additional attempts after the first failure (1–10).</p>
+                <p class="field-hint">{i18n.t('settings.hint.retry_count')}</p>
               {/if}
             </div>
           </div>
 
           <div class="field-row">
-            <label class="field-label" for="retry-delay">Retry delay (ms)</label>
+            <label class="field-label" for="retry-delay">{i18n.t('settings.field.retry_delay_ms')}</label>
             <div class="input-wrap">
               <input
                 id="retry-delay"
@@ -590,17 +603,13 @@
               {#if retry.delayError}
                 <p class="field-error">{retry.delayError}</p>
               {:else}
-                <p class="field-hint">Wait time in milliseconds before each retry attempt (0–600000).</p>
+                <p class="field-hint">{i18n.t('settings.hint.retry_delay_ms')}</p>
               {/if}
             </div>
           </div>
         {/if}
 
       </div>
-    </section>
-
-    <section class="section section--disabled" title="This feature is not available yet.">
-      <h2 class="section-title">Advanced <span class="badge-soon">Soon</span></h2>
     </section>
 
   </div>
@@ -642,24 +651,6 @@
     box-shadow: var(--shadow);
   }
 
-  .section--disabled {
-    opacity: 0.45;
-    pointer-events: none;
-    cursor: not-allowed;
-  }
-
-  .badge-soon {
-    font-size: 9.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-text-muted);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    padding: 1px 5px;
-    vertical-align: middle;
-    margin-left: 6px;
-  }
 
   .section-title {
     font-size: 12px;

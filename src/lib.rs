@@ -1,10 +1,11 @@
 // Public library surface used by the Tauri shell and external consumers.
-// CLI-specific code (cli, i18n) stays bin-only.
+// CLI-specific code (cli) stays bin-only.
 pub mod cache;
 pub mod config;
 pub mod dns;
 pub mod export;
 pub mod http;
+pub mod i18n;
 pub mod metrics;
 pub mod models;
 pub mod rdap;

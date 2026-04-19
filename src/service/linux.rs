@@ -42,9 +42,9 @@ pub fn install() -> Result<()> {
     systemctl(&["daemon-reload"])?;
     systemctl(&["enable", "--now", "atlasip"])?;
 
-    println!("AtlasIP service installed and started.");
-    println!("  Status : systemctl status atlasip");
-    println!("  Logs   : journalctl -u atlasip -f");
+    println!("{}", crate::i18n::t("service.linux.installed"));
+    println!("{}", crate::i18n::t("service.linux.hint.status"));
+    println!("{}", crate::i18n::t("service.linux.hint.logs"));
     Ok(())
 }
 
@@ -61,7 +61,7 @@ pub fn uninstall() -> Result<()> {
     }
 
     systemctl(&["daemon-reload"])?;
-    println!("AtlasIP service uninstalled.");
+    println!("{}", crate::i18n::t("service.linux.uninstalled"));
     Ok(())
 }
 

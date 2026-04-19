@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { i18n } from '$lib/services/i18n.svelte';
+
   interface Props {
     label: string;
     description: string;
@@ -16,8 +18,8 @@
   }: Props = $props();
 
   // ── Logarithmic slider ────────────────────────────────────────────────────
-  const LOG_MIN = Math.log10(Math.max(10, min || 10));
-  const LOG_MAX = Math.log10(max);
+  const LOG_MIN = $derived(Math.log10(Math.max(10, min || 10)));
+  const LOG_MAX = $derived(Math.log10(max));
 
   function msToSlider(ms: number): number {
     const clamped = Math.max(Math.max(10, min), Math.min(max, ms));
@@ -59,9 +61,9 @@
   }
 
   function naturalPhrase(ms: number): string {
-    if (ms < 1_000)  return `The server will wait up to ${ms} ms before giving up.`;
-    if (ms < 60_000) return `The server will wait up to ${(ms / 1_000).toFixed(ms % 1_000 === 0 ? 0 : 1)} seconds before giving up.`;
-    return `The server will wait up to ${(ms / 60_000).toFixed(ms % 60_000 === 0 ? 0 : 1)} minutes before giving up.`;
+    if (ms < 1_000)  return i18n.t('hdi.phrase.ms').replace('{n}', String(ms));
+    if (ms < 60_000) return i18n.t('hdi.phrase.seconds').replace('{n}', (ms / 1_000).toFixed(ms % 1_000 === 0 ? 0 : 1));
+    return i18n.t('hdi.phrase.minutes').replace('{n}', (ms / 60_000).toFixed(ms % 60_000 === 0 ? 0 : 1));
   }
 
   let textVal = $state(formatDisplay(value));
@@ -73,15 +75,15 @@
     textVal = raw;
     const parsed = parseDuration(raw);
     if (!parsed) {
-      error = 'Enter a value like 500, 5s, or 1.5min';
+      error = i18n.t('hdi.error.format');
       return;
     }
     if (parsed.ms < min) {
-      error = `Minimum is ${formatDisplay(min)}`;
+      error = i18n.t('hdi.error.min').replace('{val}', formatDisplay(min));
       return;
     }
     if (parsed.ms > max) {
-      error = `Maximum is ${formatDisplay(max)}`;
+      error = i18n.t('hdi.error.max').replace('{val}', formatDisplay(max));
       return;
     }
     error = '';

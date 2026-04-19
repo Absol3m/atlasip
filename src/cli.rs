@@ -10,7 +10,6 @@ use crate::{
     config::{AppConfig, DnsMode},
     export::{self, ExportFormat},
     http::{self, AppState},
-    i18n::I18n,
     models::IpRecord,
     service,
     utils,
@@ -143,7 +142,7 @@ pub enum ConfigAction {
 
     /// Set a single configuration value (format: key=value).
     Set {
-        /// Key-value pair, e.g. `language=en` or `proxy.socks5=socks5://host:1080`.
+        /// Key-value pair, e.g. `locale=en-US` or `proxy.socks5=socks5://host:1080`.
         kv: String,
     },
 }
@@ -212,13 +211,11 @@ async fn cmd_lookup(
     output: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let config = load_config();
-    let i18n = try_i18n();
 
     // Validate that the target is not obviously private (best-effort).
     if let Ok(ip) = target.parse::<std::net::IpAddr>() {
         if !utils::is_public_ip(&ip) {
-            let msg = translate(&i18n, "error.private_ip");
-            anyhow::bail!("{msg}");
+            anyhow::bail!("{}", crate::i18n::t("errors.error.private_ip"));
         }
     }
 
@@ -284,7 +281,7 @@ fn cmd_config_set(kv: String) -> anyhow::Result<()> {
     config.validate()?;
     let path = AppConfig::default_path();
     config.save(&path)?;
-    println!("Saved: {kv}");
+    println!("{}", crate::i18n::t("ui.cli.config_saved").replace("{kv}", &kv));
     Ok(())
 }
 
@@ -305,7 +302,7 @@ fn apply_key_value(config: &mut AppConfig, kv: &str) -> anyhow::Result<()> {
 
     match key.trim() {
         // String fields
-        "language"               => config.language               = value.to_owned(),
+        "locale"                 => config.locale                 = value.to_owned(),
         "listen_addr"            => config.listen_addr            = value.to_owned(),
         "whois_server_override"  => config.whois_server_override  = value.to_owned(),
         "default_export_format"  => config.default_export_format  = value.to_owned(),
@@ -384,18 +381,6 @@ fn opt_str(value: &str) -> Option<String> {
     } else {
         Some(value.to_owned())
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers — i18n
-// ---------------------------------------------------------------------------
-
-fn try_i18n() -> Option<I18n> {
-    I18n::new("fr", "en").ok()
-}
-
-fn translate(i18n: &Option<I18n>, key: &str) -> String {
-    i18n.as_ref().map(|i| i.t(key)).unwrap_or_else(|| key.to_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -600,12 +585,12 @@ mod tests {
 
     #[test]
     fn test_cli_config_set_parses_args() {
-        let cli = parse(&["atlasip", "config", "set", "language=en"]).unwrap();
+        let cli = parse(&["atlasip", "config", "set", "locale=en-US"]).unwrap();
         match cli.command {
             Commands::Config {
                 action: ConfigAction::Set { kv },
             } => {
-                assert_eq!(kv, "language=en");
+                assert_eq!(kv, "locale=en-US");
             }
             _ => panic!("expected Config Set"),
         }
@@ -659,8 +644,8 @@ mod tests {
     #[test]
     fn test_apply_key_value_string() {
         let mut cfg = AppConfig::default();
-        apply_key_value(&mut cfg, "language=en").unwrap();
-        assert_eq!(cfg.language, "en");
+        apply_key_value(&mut cfg, "locale=en-US").unwrap();
+        assert_eq!(cfg.locale, "en-US");
     }
 
     #[test]
@@ -702,6 +687,6 @@ mod tests {
     #[test]
     fn test_apply_key_value_missing_equals() {
         let mut cfg = AppConfig::default();
-        assert!(apply_key_value(&mut cfg, "language").is_err());
+        assert!(apply_key_value(&mut cfg, "locale").is_err());
     }
 }

@@ -224,7 +224,7 @@ pub struct ExportQuery {
 /// Request body for POST /config
 #[derive(Debug, Deserialize)]
 pub struct ConfigUpdateRequest {
-    pub language: Option<String>,
+    pub locale: Option<String>,
     pub proxy_type: Option<String>,
     pub proxy_host: Option<String>,
     pub proxy_port: Option<u16>,
