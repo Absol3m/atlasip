@@ -7,4 +7,4 @@ Each version links to its dedicated changelog file.
 
 | Version | Date | Notes |
 |---------|------|-------|
-| [0.6.0](changelog/0.6.0.md) | 2026-04-19 | Service mode, i18n, tray, about modal, UI stability |
+| [0.6.0](docs/changelog/0.6.0.md) | 2026-04-19 | Service mode, i18n, tray, about modal, UI stability |
