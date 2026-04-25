@@ -1,7 +1,23 @@
+export interface BgpPeer {
+  asn: number;
+  name: string | null;
+  country: string | null;
+}
+
+export interface BgpInfo {
+  asn: number | null;
+  as_name: string | null;
+  as_country: string | null;
+  prefixes_v4: string[];
+  prefixes_v6: string[];
+  peers: BgpPeer[];
+}
+
 export interface DnsRecord {
   record_type: string;
   value: string;
   ttl: number;
+  dnssec_validated: boolean;
 }
 
 export interface IpRecord {
@@ -29,8 +45,12 @@ export interface IpRecord {
   abuse_contact: string | null;
   raw_whois: string | null;
   raw_rdap: unknown;
+  geo_lat:  number | null;
+  geo_lon:  number | null;
+  geo_city: string | null;
   dns_records: DnsRecord[];
   lookup_errors: string[];
+  bgp: BgpInfo | null;
 }
 
 export interface ColumnDef {

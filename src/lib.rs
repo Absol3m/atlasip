@@ -1,7 +1,9 @@
 // Public library surface used by the Tauri shell and external consumers.
 // CLI-specific code (cli) stays bin-only.
+pub mod bgp;
 pub mod cache;
 pub mod config;
+pub mod geoip;
 pub mod dns;
 pub mod export;
 pub mod http;

@@ -19,6 +19,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info, warn};
 
 use crate::{
+    bgp::BgpClient,
     cache::LookupCache,
     config::AppConfig,
     dns,
@@ -123,6 +124,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/analyze/ip/:ip",        get(analyze_ip))
         .route("/analyze/domain/:domain", get(analyze_domain))
         .route("/reverse/:ip",           get(reverse_ip))
+        .route("/reverse-ip/:ip",        get(reverse_ip_domains))
         .layer(cors)
         .with_state(state)
 }
@@ -209,7 +211,13 @@ async fn perform_lookup_inner(
         target.to_owned()
     } else {
         record.host_name = Some(target.to_owned());
-        let dns_result = dns::full_dns_lookup(target, config.dns_timeout_ms).await;
+        let dns_result = dns::full_dns_lookup(
+            target,
+            config.dns_timeout_ms,
+            &config.dns_mode,
+            &config.doh_endpoint,
+            &config.dot_server,
+        ).await;
 
         // Propagate DNS records (A, AAAA, CNAME, TXT with TTL).
         record.dns_records = dns_result.records;
@@ -228,10 +236,16 @@ async fn perform_lookup_inner(
             }
             None => {
                 metrics.record_dns(dns_start.elapsed().as_micros() as u64, false);
-                let msg = "DNS: no A/AAAA record resolved".to_owned();
-                warn!("{msg} for {target}");
-                record.lookup_errors.push(msg);
-                return record; // No IP resolved — nothing more to do, don't cache.
+                // Only surface an error when DNS returned nothing at all (NXDOMAIN,
+                // timeout, network failure).  If other record types (MX, NS, TXT…)
+                // were found the query succeeded — the domain just has no address
+                // record, which is normal for mail-only or delegation-only zones.
+                if record.dns_records.is_empty() {
+                    let msg = "DNS: no A/AAAA record resolved".to_owned();
+                    warn!("{msg} for {target}");
+                    record.lookup_errors.push(msg);
+                }
+                return record; // No IP → RDAP/WHOIS/GeoIP cannot run.
             }
         }
     };
@@ -295,7 +309,19 @@ async fn perform_lookup_inner(
         }
     };
 
-    let (rdap_result, whois_result) = tokio::join!(rdap_future, whois_future);
+    let bgp_future = {
+        let ip_clone = ip.clone();
+        // Cap at 1 500 ms per request so 2 sequential rounds (ip → prefixes+peers)
+        // stay within the 5 s global timeout even on a slow BGPView response.
+        let timeout  = config.rdap_timeout_ms.min(1_500);
+        async move {
+            let client = BgpClient::new(timeout)?;
+            client.lookup(&ip_clone).await
+        }
+    };
+
+    let (rdap_result, whois_result, bgp_result) =
+        tokio::join!(rdap_future, whois_future, bgp_future);
 
     let rdap_ok = match rdap_result {
         Ok(rdap) => {
@@ -336,6 +362,23 @@ async fn perform_lookup_inner(
             if rdap_ok { warn!("{msg}"); } else { error!("{msg}"); }
             record.lookup_errors.push(msg);
         }
+    }
+
+    // ── Step 4: BGP (BGPView, non-blocking) ─────────────────────────────────
+    match bgp_result {
+        Ok(bgp) => {
+            record.bgp = Some(bgp);
+        }
+        Err(e) => {
+            warn!(target: "atlasip::bgp", %ip, "BGP lookup failed: {e}");
+        }
+    }
+
+    // ── Step 5: GeoIP (MaxMind GeoLite2, non-blocking) ──────────────────────
+    if let Some(geo) = crate::geoip::lookup(&ip) {
+        record.geo_lat  = Some(geo.lat);
+        record.geo_lon  = Some(geo.lon);
+        record.geo_city = geo.city;
     }
 
     // ── Cache insert (P0-PERF-004) ───────────────────────────────────────────
@@ -654,6 +697,7 @@ async fn reverse_ip(
         &cfg.dns_mode,
         cfg.dns_system_timeout_ms,
         &cfg.doh_endpoint,
+        &cfg.dot_server,
         cfg.dns_timeout_ms,
     )
     .await
@@ -668,6 +712,154 @@ async fn reverse_ip(
         "dns_mode": dns_mode_label,
     }))
     .into_response())
+}
+
+/// GET /reverse-ip/:ip
+/// GET /reverse-ip/:ip[?hostname=<ptr>]
+///
+/// Multi-source OSINT reverse IP: queries all available passive sources in
+/// parallel, deduplicates results and attributes each domain to its source(s).
+///
+/// Sources:
+///   - hackertarget — passive DNS reverse IP
+///   - crtsh        — certificate transparency (requires PTR hostname)
+///
+/// Response:
+/// ```json
+/// {
+///   "ip": "1.2.3.4",
+///   "results": [{ "domain": "example.com", "sources": ["hackertarget"] }],
+///   "count": 12,
+///   "source_errors": [{ "source": "crtsh", "error": "timeout" }]
+/// }
+/// ```
+async fn reverse_ip_domains(
+    State(state): State<AppState>,
+    Path(ip):     Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse, ApiError> {
+    if ip.parse::<std::net::IpAddr>().is_err() {
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({
+                "error": crate::i18n::t("errors.error.invalid_ip_reverse").replace("{ip}", &ip)
+            })),
+        )
+            .into_response());
+    }
+
+    let timeout_ms = {
+        let cfg = state.config.read().await;
+        cfg.rdap_timeout_ms
+    };
+
+    let hostname = params.get("hostname").cloned();
+
+    let client: reqwest::Client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .user_agent("AtlasIP/0.7 (OSINT; https://github.com/atlasip)")
+        .build()?;
+
+    // ── Run all sources in parallel ──────────────────────────────────────────
+    let (ht_result, crtsh_result) = tokio::join!(
+        query_hackertarget(&client, &ip),
+        query_crtsh(&client, hostname.as_deref()),
+    );
+
+    // ── Merge + deduplicate: domain → set of sources ─────────────────────────
+    let mut map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut source_errors: Vec<serde_json::Value> = Vec::new();
+
+    let mut ingest = |result: Result<Vec<String>, String>, source: &str| {
+        match result {
+            Ok(domains) => {
+                for d in domains {
+                    map.entry(d).or_default().push(source.to_owned());
+                }
+            }
+            Err(e) => {
+                source_errors.push(serde_json::json!({ "source": source, "error": e }));
+            }
+        }
+    };
+
+    ingest(ht_result,    "hackertarget");
+    ingest(crtsh_result, "crtsh");
+
+    let mut results: Vec<serde_json::Value> = map
+        .into_iter()
+        .map(|(domain, sources)| serde_json::json!({ "domain": domain, "sources": sources }))
+        .collect();
+    results.sort_by(|a, b| {
+        a["domain"].as_str().unwrap_or("").cmp(b["domain"].as_str().unwrap_or(""))
+    });
+
+    let count = results.len();
+    Ok(Json(serde_json::json!({
+        "ip":            ip,
+        "results":       results,
+        "count":         count,
+        "source_errors": source_errors,
+    }))
+    .into_response())
+}
+
+/// Query HackerTarget reverse IP — returns plain-text, one domain per line.
+async fn query_hackertarget(
+    client: &reqwest::Client,
+    ip: &str,
+) -> Result<Vec<String>, String> {
+    let url  = format!("https://api.hackertarget.com/reverseiplookup/?q={ip}");
+    let body = client.get(&url).send().await
+        .map_err(|e| e.to_string())?
+        .text().await
+        .map_err(|e| e.to_string())?;
+
+    if body.starts_with("error") || body.trim() == "No Records Found" {
+        return Ok(Vec::new());
+    }
+    Ok(body.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("error"))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// Query crt.sh certificate transparency for `hostname` (PTR of the IP).
+/// Returns unique domain names extracted from certificate SANs.
+/// Returns `Ok(vec![])` when no hostname is available.
+async fn query_crtsh(
+    client: &reqwest::Client,
+    hostname: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let host = match hostname {
+        Some(h) if !h.is_empty() => h,
+        _ => return Ok(Vec::new()),
+    };
+
+    let url = format!("https://crt.sh/?q={host}&output=json");
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Ok(Vec::new()); // crt.sh down or rate-limited — non-blocking
+    }
+
+    let entries: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
+
+    let mut domains: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in &entries {
+        if let Some(names) = entry["name_value"].as_str() {
+            for name in names.split('\n') {
+                let name = name.trim().trim_start_matches("*.").to_owned();
+                if !name.is_empty() && name.contains('.') {
+                    domains.insert(name);
+                }
+            }
+        }
+    }
+
+    Ok(domains.into_iter().collect())
 }
 
 // ---------------------------------------------------------------------------

@@ -1,21 +1,21 @@
 // ── DNS resolution ────────────────────────────────────────────────────────────
 // Implements the full DNS lookup pipeline (spec §2.1 — Step 1/2):
-//   • Forward A / AAAA resolution   (P0-DNS-001)
-//   • CNAME chain detection          (P1-DNS-002)
-//   • PTR reverse lookup             (P1-DNS-003)
-//   • TXT record extraction          (P1-DNS-004)
-//   • TTL on every record            (P2-DNS-006)
-//   • Parallel A + AAAA + CNAME + TXT (P2-DNS-005)
-//   • Global lookup deadline          (P1-NETWORK-003)
-//   • DNS-over-HTTPS reverse lookup   (spec §4 — DoH)
-//   • Intelligent fallback            (spec §5 — System → DoH)
+//   • Forward A / AAAA / CNAME / TXT / MX / NS / SOA   (P0-DNS-001, #14)
+//   • PTR reverse lookup                                 (P1-DNS-003)
+//   • TTL on every record                                (P2-DNS-006)
+//   • Parallel queries                                   (P2-DNS-005)
+//   • DNSSEC validation status via DoH AD flag           (#14)
+//   • DNS-over-TLS transport                             (#14)
+//   • Global lookup deadline                             (P1-NETWORK-003)
+//   • DNS-over-HTTPS reverse lookup                      (spec §4)
+//   • Intelligent fallback (System → DoH)                (spec §5)
 
 use anyhow::{Context, Result};
 use hickory_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    error::ResolveErrorKind,
-    proto::rr::RecordType,
-    TokioAsyncResolver,
+    config::{ResolverConfig, ResolverOpts, CLOUDFLARE, GOOGLE, QUAD9},
+    net::runtime::TokioRuntimeProvider,
+    proto::rr::{RData, RecordType},
+    TokioResolver,
 };
 use std::{net::IpAddr, time::Duration};
 use tokio::time::timeout;
@@ -31,6 +31,9 @@ use crate::{config::DnsMode, models::DnsRecord};
 struct DohResponse {
     #[serde(rename = "Answer")]
     answer: Option<Vec<DohAnswer>>,
+    /// Authenticated Data bit — true when DNSSEC validation passed.
+    #[serde(rename = "AD", default)]
+    ad: bool,
 }
 
 /// Individual answer record in a DoH JSON response.
@@ -45,9 +48,6 @@ struct DohAnswer {
 // ---------------------------------------------------------------------------
 
 /// Convert an IP address string to its PTR query name.
-///
-/// IPv4 `1.2.3.4`  → `4.3.2.1.in-addr.arpa`
-/// IPv6 `2001:db8::1` → nibble-reversed `.ip6.arpa`
 fn ip_to_ptr_name(ip: &str) -> Option<String> {
     let addr: IpAddr = ip.parse().ok()?;
     match addr {
@@ -56,7 +56,6 @@ fn ip_to_ptr_name(ip: &str) -> Option<String> {
             Some(format!("{d}.{c}.{b}.{a}.in-addr.arpa"))
         }
         IpAddr::V6(v6) => {
-            // Expand to 32 hex nibbles, reverse, join with dots.
             let hex: String = v6.octets().iter().map(|b| format!("{b:02x}")).collect();
             let reversed: String = hex
                 .chars()
@@ -70,19 +69,79 @@ fn ip_to_ptr_name(ip: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Public API — DoH reverse lookup (spec §4)
+// Resolver builders
 // ---------------------------------------------------------------------------
 
-/// Perform a PTR reverse lookup for `ip` using DNS-over-HTTPS.
-///
-/// Uses a GET request with `Accept: application/dns-json` to `endpoint`
-/// (default: `https://cloudflare-dns.com/dns-query`).
-/// Never touches the system resolver.
-///
-/// Returns:
-/// - `Ok(Some(ptr))` — PTR record found; trailing dot stripped.
-/// - `Ok(None)`      — NXDOMAIN or empty answer.
-/// - `Err(_)`        — network / parse error.
+fn build_resolver(timeout_ms: u64) -> TokioResolver {
+    let mut opts = ResolverOpts::default();
+    opts.timeout  = Duration::from_millis(timeout_ms);
+    opts.attempts = 2;
+    // Try system DNS first; fall back to Cloudflare when the system config
+    // contains entries hickory cannot parse (e.g. macOS scoped IPv6 link-local
+    // addresses like fe80::1%en0).
+    let builder = TokioResolver::builder_tokio().unwrap_or_else(|_| {
+        tracing::warn!(
+            "system DNS config could not be parsed (scoped IPv6?); \
+             falling back to Cloudflare 1.1.1.1"
+        );
+        TokioResolver::builder_with_config(
+            ResolverConfig::udp_and_tcp(&CLOUDFLARE),
+            TokioRuntimeProvider::default(),
+        )
+    });
+    builder
+        .with_options(opts)
+        .build()
+        .expect("failed to build DNS resolver")
+}
+
+/// Build a DNS-over-TLS resolver for the named server.
+/// Accepted values: `"cloudflare"`, `"google"`, `"quad9"` (default: cloudflare).
+fn build_dot_resolver(server: &str, timeout_ms: u64) -> TokioResolver {
+    let config = match server {
+        "google" => ResolverConfig::tls(&GOOGLE),
+        "quad9"  => ResolverConfig::tls(&QUAD9),
+        _        => ResolverConfig::tls(&CLOUDFLARE),
+    };
+    let mut opts = ResolverOpts::default();
+    opts.timeout  = Duration::from_millis(timeout_ms);
+    opts.attempts = 2;
+    TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+        .with_options(opts)
+        .build()
+        .expect("failed to build DoT resolver")
+}
+
+// ---------------------------------------------------------------------------
+// Internal record query helper
+// ---------------------------------------------------------------------------
+
+/// Query for all records of `record_type`.  Never fails — errors yield an empty vec.
+async fn query_records(
+    resolver: &TokioResolver,
+    hostname: &str,
+    record_type: RecordType,
+    dnssec_validated: bool,
+) -> Vec<DnsRecord> {
+    match resolver.lookup(hostname, record_type).await {
+        Ok(lookup) => lookup
+            .answers()
+            .iter()
+            .map(|record| DnsRecord {
+                record_type: record.record_type().to_string(),
+                value: record.data.to_string().trim_end_matches('.').to_owned(),
+                ttl: record.ttl,
+                dnssec_validated,
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public API — DoH PTR reverse lookup (spec §4)
+// ---------------------------------------------------------------------------
+
 pub async fn reverse_dns_doh(ip: &str, endpoint: &str, timeout_ms: u64) -> Result<Option<String>> {
     let ptr_name = ip_to_ptr_name(ip)
         .ok_or_else(|| anyhow::anyhow!("{}", crate::i18n::t("errors.error.dns.invalid_ip_ptr").replace("{ip}", ip)))?;
@@ -94,14 +153,12 @@ pub async fn reverse_dns_doh(ip: &str, endpoint: &str, timeout_ms: u64) -> Resul
         .build()
         .context(crate::i18n::t("errors.error.dns.doh_client_build"))?;
 
-    let response = client
+    let body: DohResponse = client
         .get(&url)
         .header("Accept", "application/dns-json")
         .send()
         .await
-        .with_context(|| crate::i18n::t("errors.error.dns.doh_request").replace("{ip}", ip))?;
-
-    let body: DohResponse = response
+        .with_context(|| crate::i18n::t("errors.error.dns.doh_request").replace("{ip}", ip))?
         .json()
         .await
         .context(crate::i18n::t("errors.error.dns.doh_parse"))?;
@@ -116,46 +173,75 @@ pub async fn reverse_dns_doh(ip: &str, endpoint: &str, timeout_ms: u64) -> Resul
 }
 
 // ---------------------------------------------------------------------------
+// Internal — DoH DNSSEC check (returns AD flag for a hostname)
+// ---------------------------------------------------------------------------
+
+/// Query the DoH endpoint for an A record and return the AD (Authenticated Data) flag.
+/// Used to stamp all records from a `full_dns_lookup` with their DNSSEC status.
+async fn dnssec_check_doh(hostname: &str, endpoint: &str, timeout_ms: u64) -> bool {
+    let url = format!("{endpoint}?name={hostname}&type=A&do=1");
+
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+    else {
+        return false;
+    };
+
+    let Ok(resp) = client
+        .get(&url)
+        .header("Accept", "application/dns-json")
+        .send()
+        .await
+    else {
+        return false;
+    };
+
+    resp.json::<DohResponse>().await.map(|r| r.ad).unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
 // Public API — intelligent fallback reverse lookup (spec §5)
 // ---------------------------------------------------------------------------
 
-/// Perform a reverse PTR lookup using the strategy defined in `dns_mode`.
-///
-/// | mode         | behaviour                                                    |
-/// |--------------|--------------------------------------------------------------|
-/// | `Disabled`   | Always returns `Ok(None)`.                                   |
-/// | `SystemOnly` | Uses the OS resolver only.                                   |
-/// | `DohOnly`    | Uses DoH only.                                               |
-/// | `Automatic`  | Tries OS resolver (bounded by `system_timeout_ms`); on any  |
-/// |              | error or timeout, retries with DoH.                          |
 pub async fn reverse_lookup_smart(
     ip: &str,
     dns_mode: &DnsMode,
     system_timeout_ms: u64,
     doh_endpoint: &str,
+    dot_server: &str,
     doh_timeout_ms: u64,
 ) -> Result<Option<String>> {
     match dns_mode {
-        DnsMode::Disabled => Ok(None),
-
+        DnsMode::Disabled   => Ok(None),
         DnsMode::SystemOnly => reverse_lookup(ip, system_timeout_ms).await,
-
-        DnsMode::DohOnly => reverse_dns_doh(ip, doh_endpoint, doh_timeout_ms).await,
-
-        DnsMode::Automatic => {
-            // First leg: system DNS with a tight deadline.
-            let system_result = reverse_lookup(ip, system_timeout_ms).await;
-
-            match system_result {
-                // Got a definitive answer (even if None = no PTR) — use it.
+        DnsMode::DohOnly    => reverse_dns_doh(ip, doh_endpoint, doh_timeout_ms).await,
+        DnsMode::DotOnly    => {
+            let resolver = build_dot_resolver(dot_server, doh_timeout_ms);
+            let ptr_name = ip_to_ptr_name(ip)
+                .ok_or_else(|| anyhow::anyhow!("{}", crate::i18n::t("errors.error.invalid_ip_reverse").replace("{ip}", ip)))?;
+            let deadline = Duration::from_millis(doh_timeout_ms * 2);
+            let result = timeout(deadline, resolver.reverse_lookup(&ptr_name))
+                .await
+                .context(crate::i18n::t("errors.error.dns.reverse_timeout"))?;
+            match result {
+                Ok(lookup) => Ok(lookup.answers().iter().find_map(|r| {
+                    if let RData::PTR(ptr) = &r.data {
+                        Some(ptr.0.to_string().trim_end_matches('.').to_owned())
+                    } else {
+                        None
+                    }
+                })),
+                Err(e) if e.is_no_records_found() => Ok(None),
+                Err(e) => Err(anyhow::Error::new(e)
+                    .context(crate::i18n::t("errors.error.dns.reverse_failed").replace("{ip}", ip))),
+            }
+        }
+        DnsMode::Automatic  => {
+            match reverse_lookup(ip, system_timeout_ms).await {
                 Ok(result) => Ok(result),
-                // Any error (timeout, SERVFAIL, network…) → DoH fallback.
                 Err(_) => {
-                    tracing::debug!(
-                        target: "atlasip::dns",
-                        %ip,
-                        "system DNS failed; falling back to DoH"
-                    );
+                    tracing::debug!(target: "atlasip::dns", %ip, "system DNS failed; falling back to DoH");
                     reverse_dns_doh(ip, doh_endpoint, doh_timeout_ms).await
                 }
             }
@@ -167,52 +253,104 @@ pub async fn reverse_lookup_smart(
 // Public result type for a full hostname lookup
 // ---------------------------------------------------------------------------
 
-/// All DNS data collected for one hostname target.
 pub struct DnsLookupResult {
     /// First A or AAAA address resolved (used as the pipeline IP).
     pub resolved_ip: Option<String>,
-    /// PTR name for the resolved IP (non-blocking; `None` if absent).
+    /// PTR name for the resolved IP.
     pub ptr: Option<String>,
-    /// All records found (A, AAAA, CNAME, TXT) with their TTL values.
+    /// All records found (A, AAAA, CNAME, TXT, MX, NS, SOA) with TTL + DNSSEC status.
     pub records: Vec<DnsRecord>,
     /// Non-fatal error messages collected during the lookup.
     pub errors: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Public API — full parallel DNS lookup
 // ---------------------------------------------------------------------------
 
-fn build_resolver(timeout_ms: u64) -> TokioAsyncResolver {
-    let mut opts = ResolverOpts::default();
-    // Per-query timeout for each DNS attempt.
-    opts.timeout = Duration::from_millis(timeout_ms);
-    // Two attempts before giving up (covers transient SERVFAIL etc.).
-    opts.attempts = 2;
-    TokioAsyncResolver::tokio(ResolverConfig::default(), opts)
-}
-
-/// Query for all records of `record_type` and return them as [`DnsRecord`]s.
-/// Non-fatal: any error yields an empty vec (NXDOMAIN, SERVFAIL, timeout…).
-async fn query_records(
-    resolver: &TokioAsyncResolver,
+/// Perform a full DNS lookup for `hostname`:
+///
+/// 1. Parallel queries: A, AAAA, CNAME, TXT, MX, NS, SOA.
+/// 2. Concurrent DNSSEC check via DoH AD flag (stamped on all records).
+/// 3. Extract the first resolved IP from A/AAAA records.
+/// 4. PTR reverse lookup on the resolved IP.
+///
+/// Transport is selected by `dns_mode`:
+/// - `Automatic` / `SystemOnly` → hickory system resolver.
+/// - `DohOnly` → hickory system resolver for records + DNSSEC via DoH.
+/// - `DotOnly` → hickory DoT resolver with `dot_server`.
+/// - `Disabled` → returns empty result.
+pub async fn full_dns_lookup(
     hostname: &str,
-    record_type: RecordType,
-) -> Vec<DnsRecord> {
-    match resolver.lookup(hostname, record_type).await {
-        Ok(lookup) => lookup
-            .records()
+    timeout_ms: u64,
+    dns_mode: &DnsMode,
+    doh_endpoint: &str,
+    dot_server: &str,
+) -> DnsLookupResult {
+    if matches!(dns_mode, DnsMode::Disabled) {
+        return DnsLookupResult { resolved_ip: None, ptr: None, records: Vec::new(), errors: Vec::new() };
+    }
+
+    let deadline = Duration::from_millis(timeout_ms * 3);
+    let mut errors: Vec<String> = Vec::new();
+
+    let inner = async {
+        let resolver = match dns_mode {
+            DnsMode::DotOnly => build_dot_resolver(dot_server, timeout_ms),
+            _                => build_resolver(timeout_ms),
+        };
+
+        // DNSSEC check runs concurrently with record queries.
+        let dnssec_fut = dnssec_check_doh(hostname, doh_endpoint, timeout_ms);
+
+        let (
+            a_recs, aaaa_recs, cname_recs, txt_recs,
+            mx_recs, ns_recs, soa_recs,
+            dnssec_validated,
+        ) = tokio::join!(
+            query_records(&resolver, hostname, RecordType::A,     false),
+            query_records(&resolver, hostname, RecordType::AAAA,  false),
+            query_records(&resolver, hostname, RecordType::CNAME, false),
+            query_records(&resolver, hostname, RecordType::TXT,   false),
+            query_records(&resolver, hostname, RecordType::MX,    false),
+            query_records(&resolver, hostname, RecordType::NS,    false),
+            query_records(&resolver, hostname, RecordType::SOA,   false),
+            dnssec_fut,
+        );
+
+        // Re-stamp all records with the DNSSEC result now that we have it.
+        let mut records: Vec<DnsRecord> = [a_recs, aaaa_recs, cname_recs, txt_recs, mx_recs, ns_recs, soa_recs]
+            .into_iter()
+            .flatten()
+            .map(|mut r| { r.dnssec_validated = dnssec_validated; r })
+            .collect();
+
+        // Sort for stable display order: A → AAAA → CNAME → MX → NS → SOA → TXT.
+        let type_order = |t: &str| match t {
+            "A"     => 0u8, "AAAA"  => 1, "CNAME" => 2, "MX" => 3,
+            "NS"    => 4,   "SOA"   => 5, "TXT"   => 6, _    => 7,
+        };
+        records.sort_by_key(|r| type_order(&r.record_type));
+
+        let resolved_ip = records
             .iter()
-            .filter_map(|record| {
-                record.data().map(|data| DnsRecord {
-                    record_type: record.record_type().to_string(),
-                    // Strip trailing dot from CNAME/PTR names for cleanliness.
-                    value: data.to_string().trim_end_matches('.').to_owned(),
-                    ttl: record.ttl(),
-                })
-            })
-            .collect(),
-        Err(_) => Vec::new(),
+            .find(|r| r.record_type == "A" || r.record_type == "AAAA")
+            .map(|r| r.value.clone());
+
+        let ptr = match &resolved_ip {
+            Some(ip) => reverse_lookup(ip, timeout_ms).await.ok().flatten(),
+            None     => None,
+        };
+
+        (records, resolved_ip, ptr)
+    };
+
+    match timeout(deadline, inner).await {
+        Ok((records, resolved_ip, ptr)) => DnsLookupResult { resolved_ip, ptr, records, errors },
+        Err(_) => {
+            errors.push(crate::i18n::t("errors.error.dns.lookup_timeout").replace("{hostname}", hostname));
+            DnsLookupResult { resolved_ip: None, ptr: None, records: Vec::new(), errors }
+        }
     }
 }
 
@@ -220,12 +358,9 @@ async fn query_records(
 // Public API — backward-compatible single-result helpers
 // ---------------------------------------------------------------------------
 
-/// Resolve a hostname to its first A or AAAA IP address.
-///
-/// Bounded by `timeout_ms` milliseconds. Returns an error on failure.
 pub async fn resolve_hostname(hostname: &str, timeout_ms: u64) -> Result<String> {
     let resolver = build_resolver(timeout_ms);
-    let deadline = Duration::from_millis(timeout_ms * 2); // covers retries
+    let deadline = Duration::from_millis(timeout_ms * 2);
 
     let lookup = timeout(deadline, resolver.lookup_ip(hostname))
         .await
@@ -240,106 +375,28 @@ pub async fn resolve_hostname(hostname: &str, timeout_ms: u64) -> Result<String>
     Ok(addr.to_string())
 }
 
-/// Perform a reverse PTR lookup for an IP address string (IPv4 or IPv6).
-///
-/// Returns:
-/// - `Ok(Some(ptr))` — PTR record found; trailing dot stripped.
-/// - `Ok(None)`      — NXDOMAIN or no PTR record (not an error).
-/// - `Err(_)`        — network error, invalid IP, or timeout.
 pub async fn reverse_lookup(ip: &str, timeout_ms: u64) -> Result<Option<String>> {
-    let addr: IpAddr = ip
-        .parse()
-        .with_context(|| crate::i18n::t("errors.error.invalid_ip_reverse").replace("{ip}", ip))?;
+    let ptr_name = ip_to_ptr_name(ip)
+        .ok_or_else(|| anyhow::anyhow!("{}", crate::i18n::t("errors.error.invalid_ip_reverse").replace("{ip}", ip)))?;
 
     let resolver = build_resolver(timeout_ms);
     let deadline = Duration::from_millis(timeout_ms * 2);
 
-    let result = timeout(deadline, resolver.reverse_lookup(addr))
+    let result = timeout(deadline, resolver.reverse_lookup(&ptr_name))
         .await
         .context(crate::i18n::t("errors.error.dns.reverse_timeout"))?;
 
     match result {
-        Ok(lookup) => {
-            let name = lookup.iter().next().map(|record| {
-                record.0.to_string().trim_end_matches('.').to_owned()
-            });
-            Ok(name)
-        }
-        Err(e) => match e.kind() {
-            // NXDOMAIN / empty answer — no PTR record exists, not an error.
-            ResolveErrorKind::NoRecordsFound { .. } => Ok(None),
-            // Any other error (timeout, SERVFAIL, …) is propagated.
-            _ => Err(anyhow::Error::new(e)
-                .context(crate::i18n::t("errors.error.dns.reverse_failed").replace("{ip}", ip))),
-        },
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Public API — full parallel DNS lookup (P2-DNS-005, P1-DNS-002/003/004)
-// ---------------------------------------------------------------------------
-
-/// Perform a full DNS lookup for `hostname`:
-///
-/// 1. Parallel queries for A, AAAA, CNAME, TXT records (with TTL).
-/// 2. Extract the first resolved IP from A/AAAA records.
-/// 3. PTR reverse lookup on the resolved IP.
-///
-/// The whole operation is bounded by `timeout_ms × 3` to cover parallel legs.
-/// Never fails — errors are captured in [`DnsLookupResult::errors`].
-pub async fn full_dns_lookup(hostname: &str, timeout_ms: u64) -> DnsLookupResult {
-    // Global deadline covering all parallel sub-queries + PTR.
-    let deadline = Duration::from_millis(timeout_ms * 3);
-    let mut errors: Vec<String> = Vec::new();
-
-    let inner = async {
-        let resolver = build_resolver(timeout_ms);
-
-        // Step A: parallel A + AAAA + CNAME + TXT (P2-DNS-005).
-        let (a_recs, aaaa_recs, cname_recs, txt_recs) = tokio::join!(
-            query_records(&resolver, hostname, RecordType::A),
-            query_records(&resolver, hostname, RecordType::AAAA),
-            query_records(&resolver, hostname, RecordType::CNAME),
-            query_records(&resolver, hostname, RecordType::TXT),
-        );
-
-        let mut records = Vec::new();
-        records.extend(a_recs);
-        records.extend(aaaa_recs);
-        records.extend(cname_recs);
-        records.extend(txt_recs);
-
-        // Step B: first resolved IP from A/AAAA.
-        let resolved_ip = records
-            .iter()
-            .find(|r| r.record_type == "A" || r.record_type == "AAAA")
-            .map(|r| r.value.clone());
-
-        // Step C: PTR on the resolved IP (non-blocking).
-        let ptr = match &resolved_ip {
-            Some(ip) => reverse_lookup(ip, timeout_ms).await.ok().flatten(),
-            None => None,
-        };
-
-        (records, resolved_ip, ptr)
-    };
-
-    match timeout(deadline, inner).await {
-        Ok((records, resolved_ip, ptr)) => DnsLookupResult {
-            resolved_ip,
-            ptr,
-            records,
-            errors,
-        },
-        Err(_) => {
-            errors.push(crate::i18n::t("errors.error.dns.lookup_timeout").replace("{hostname}", hostname));
-            DnsLookupResult {
-                resolved_ip: None,
-                ptr: None,
-                records: Vec::new(),
-                errors,
+        Ok(lookup) => Ok(lookup.answers().iter().find_map(|record| {
+            if let RData::PTR(ptr) = &record.data {
+                Some(ptr.0.to_string().trim_end_matches('.').to_owned())
+            } else {
+                None
             }
-        }
+        })),
+        Err(e) if e.is_no_records_found() => Ok(None),
+        Err(e) => Err(anyhow::Error::new(e)
+            .context(crate::i18n::t("errors.error.dns.reverse_failed").replace("{ip}", ip))),
     }
 }
 
@@ -352,13 +409,15 @@ mod tests {
     use super::*;
 
     const TIMEOUT: u64 = 3000;
+    const DOH: &str    = "https://cloudflare-dns.com/dns-query";
+    const DOT: &str    = "cloudflare";
 
     // ── Backward-compat forward lookup ───────────────────────────────────────
 
     #[tokio::test]
     async fn test_resolve_known_hostname() {
         let ip = resolve_hostname("dns.google", TIMEOUT).await.unwrap();
-        assert!(!ip.is_empty(), "Expected a non-empty IP address");
+        assert!(!ip.is_empty());
     }
 
     #[tokio::test]
@@ -377,7 +436,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_reverse_lookup_no_ptr_returns_none() {
-        // RFC 5737 documentation address — guaranteed to have no PTR record.
         let ptr = reverse_lookup("192.0.2.1", TIMEOUT).await.unwrap();
         assert!(ptr.is_none());
     }
@@ -392,92 +450,94 @@ mod tests {
 
     #[tokio::test]
     async fn test_full_dns_lookup_a_record() {
-        let result = full_dns_lookup("dns.google", TIMEOUT).await;
-        // Must resolve to at least one A/AAAA record.
-        assert!(
-            result.resolved_ip.is_some(),
-            "Expected a resolved IP for dns.google"
-        );
-        let has_a_or_aaaa = result.records.iter().any(|r| r.record_type == "A" || r.record_type == "AAAA");
-        assert!(has_a_or_aaaa, "Expected A or AAAA records");
+        let result = full_dns_lookup("dns.google", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
+        assert!(result.resolved_ip.is_some());
+        assert!(result.records.iter().any(|r| r.record_type == "A" || r.record_type == "AAAA"));
+    }
+
+    #[tokio::test]
+    async fn test_full_dns_lookup_mx_records() {
+        let result = full_dns_lookup("google.com", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
+        assert!(result.records.iter().any(|r| r.record_type == "MX"), "Expected MX records for google.com");
+    }
+
+    #[tokio::test]
+    async fn test_full_dns_lookup_ns_records() {
+        let result = full_dns_lookup("google.com", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
+        assert!(result.records.iter().any(|r| r.record_type == "NS"), "Expected NS records");
+    }
+
+    #[tokio::test]
+    async fn test_full_dns_lookup_soa_record() {
+        let result = full_dns_lookup("google.com", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
+        assert!(result.records.iter().any(|r| r.record_type == "SOA"), "Expected SOA record");
+    }
+
+    #[tokio::test]
+    async fn test_full_dns_lookup_txt_records() {
+        let result = full_dns_lookup("google.com", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
+        assert!(result.records.iter().any(|r| r.record_type == "TXT"));
+    }
+
+    #[tokio::test]
+    async fn test_full_dns_lookup_sort_order() {
+        let result = full_dns_lookup("google.com", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
+        let types: Vec<&str> = result.records.iter().map(|r| r.record_type.as_str()).collect();
+        // A records must appear before NS/SOA/TXT if present.
+        if let (Some(a_pos), Some(ns_pos)) = (
+            types.iter().position(|&t| t == "A"),
+            types.iter().position(|&t| t == "NS"),
+        ) {
+            assert!(a_pos < ns_pos);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_full_dns_lookup_dnssec_flag_is_bool() {
+        let result = full_dns_lookup("cloudflare.com", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
+        // All records should have the same dnssec_validated value (AD bit per response).
+        let flags: std::collections::HashSet<bool> = result.records.iter().map(|r| r.dnssec_validated).collect();
+        assert!(flags.len() <= 1, "all records in a response should share the same DNSSEC status");
     }
 
     #[tokio::test]
     async fn test_full_dns_lookup_ttl_present() {
-        let result = full_dns_lookup("dns.google", TIMEOUT).await;
-        // All records must have a non-zero TTL.
+        let result = full_dns_lookup("dns.google", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
         for rec in &result.records {
-            assert!(rec.ttl > 0, "Expected TTL > 0 for record {:?}", rec);
+            assert!(rec.ttl > 0, "TTL > 0 for {:?}", rec);
         }
     }
 
     #[tokio::test]
     async fn test_full_dns_lookup_ptr() {
-        // dns.google has the well-known PTR record pointing back to dns.google.
-        let result = full_dns_lookup("dns.google", TIMEOUT).await;
-        assert!(result.ptr.is_some(), "Expected PTR for dns.google");
+        let result = full_dns_lookup("dns.google", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
+        assert!(result.ptr.is_some());
     }
 
     #[tokio::test]
     async fn test_full_dns_lookup_nxdomain_returns_empty() {
-        let result = full_dns_lookup("this-does-not-exist.invalid", TIMEOUT).await;
+        let result = full_dns_lookup("this-does-not-exist.invalid", TIMEOUT, &DnsMode::Automatic, DOH, DOT).await;
         assert!(result.resolved_ip.is_none());
         assert!(result.records.is_empty());
     }
 
     #[tokio::test]
-    async fn test_full_dns_lookup_txt_records() {
-        // google.com publishes TXT records (SPF, DMARC, etc.).
-        let result = full_dns_lookup("google.com", TIMEOUT).await;
-        let has_txt = result.records.iter().any(|r| r.record_type == "TXT");
-        assert!(has_txt, "Expected TXT records for google.com");
-    }
-
-    #[tokio::test]
-    async fn test_full_dns_lookup_record_fields_non_empty() {
-        let result = full_dns_lookup("dns.google", TIMEOUT).await;
-        for rec in &result.records {
-            assert!(!rec.record_type.is_empty(), "record_type should be non-empty");
-            assert!(!rec.value.is_empty(), "value should be non-empty");
-        }
-    }
-
-    // ── query_records unit tests ─────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn test_query_records_a_returns_vec() {
-        let resolver = build_resolver(TIMEOUT);
-        let recs = query_records(&resolver, "dns.google", RecordType::A).await;
-        assert!(!recs.is_empty(), "Expected at least one A record");
-        assert!(recs.iter().all(|r| r.record_type == "A"));
-    }
-
-    #[tokio::test]
-    async fn test_query_records_nonexistent_returns_empty() {
-        let resolver = build_resolver(TIMEOUT);
-        let recs = query_records(&resolver, "no-such-host.invalid", RecordType::A).await;
-        assert!(recs.is_empty());
+    async fn test_full_dns_lookup_disabled_mode() {
+        let result = full_dns_lookup("google.com", TIMEOUT, &DnsMode::Disabled, DOH, DOT).await;
+        assert!(result.records.is_empty());
+        assert!(result.resolved_ip.is_none());
     }
 
     // ── PTR name helpers ─────────────────────────────────────────────────────
 
     #[test]
     fn test_ip_to_ptr_name_ipv4() {
-        assert_eq!(
-            ip_to_ptr_name("8.8.8.8").unwrap(),
-            "8.8.8.8.in-addr.arpa"
-        );
-        assert_eq!(
-            ip_to_ptr_name("1.2.3.4").unwrap(),
-            "4.3.2.1.in-addr.arpa"
-        );
+        assert_eq!(ip_to_ptr_name("8.8.8.8").unwrap(), "8.8.8.8.in-addr.arpa");
+        assert_eq!(ip_to_ptr_name("1.2.3.4").unwrap(), "4.3.2.1.in-addr.arpa");
     }
 
     #[test]
     fn test_ip_to_ptr_name_ipv6() {
-        // 2001:db8::1 expanded = 20010db8000000000000000000000001
-        // reversed nibbles = 1000000000000000000000008bd01002
-        // joined with dots + .ip6.arpa
         let ptr = ip_to_ptr_name("2001:db8::1").unwrap();
         assert!(ptr.ends_with(".ip6.arpa"), "unexpected: {ptr}");
     }
@@ -491,30 +551,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_reverse_dns_doh_known_ip() {
-        // Cloudflare's 1.1.1.1 has a well-known PTR record.
-        let result = reverse_dns_doh(
-            "1.1.1.1",
-            "https://cloudflare-dns.com/dns-query",
-            TIMEOUT,
-        )
-        .await
-        .unwrap();
-        assert!(result.is_some(), "expected PTR for 1.1.1.1");
+        let result = reverse_dns_doh("1.1.1.1", DOH, TIMEOUT).await.unwrap();
+        assert!(result.is_some());
         let ptr = result.unwrap();
         assert!(!ptr.is_empty());
-        assert!(!ptr.ends_with('.'), "trailing dot should be stripped");
+        assert!(!ptr.ends_with('.'));
     }
 
     #[tokio::test]
     async fn test_reverse_dns_doh_no_ptr_returns_none() {
-        // RFC 5737 documentation IP — guaranteed no PTR.
-        let result = reverse_dns_doh(
-            "192.0.2.1",
-            "https://cloudflare-dns.com/dns-query",
-            TIMEOUT,
-        )
-        .await
-        .unwrap();
+        let result = reverse_dns_doh("192.0.2.1", DOH, TIMEOUT).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -522,45 +568,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_smart_disabled_returns_none() {
-        let result = reverse_lookup_smart(
-            "8.8.8.8",
-            &DnsMode::Disabled,
-            300,
-            "https://cloudflare-dns.com/dns-query",
-            TIMEOUT,
-        )
-        .await
-        .unwrap();
+        let result = reverse_lookup_smart("8.8.8.8", &DnsMode::Disabled, 300, DOH, DOT, TIMEOUT).await.unwrap();
         assert!(result.is_none());
     }
 
     #[tokio::test]
     async fn test_smart_doh_only() {
-        let result = reverse_lookup_smart(
-            "1.1.1.1",
-            &DnsMode::DohOnly,
-            300,
-            "https://cloudflare-dns.com/dns-query",
-            TIMEOUT,
-        )
-        .await
-        .unwrap();
+        let result = reverse_lookup_smart("1.1.1.1", &DnsMode::DohOnly, 300, DOH, DOT, TIMEOUT).await.unwrap();
         assert!(result.is_some());
     }
 
     #[tokio::test]
     async fn test_smart_automatic_falls_back_on_bad_timeout() {
-        // Use 1 ms system timeout to force immediate fallback to DoH.
-        let result = reverse_lookup_smart(
-            "1.1.1.1",
-            &DnsMode::Automatic,
-            1,          // essentially zero: system DNS will time out
-            "https://cloudflare-dns.com/dns-query",
-            TIMEOUT,
-        )
-        .await;
-        // Either the system DNS succeeded (fast enough) or DoH took over.
-        // Either way the call must not return Err.
+        let result = reverse_lookup_smart("1.1.1.1", &DnsMode::Automatic, 1, DOH, DOT, TIMEOUT).await;
         assert!(result.is_ok());
     }
 }

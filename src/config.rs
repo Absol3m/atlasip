@@ -20,6 +20,8 @@ pub enum DnsMode {
     SystemOnly,
     /// Use only the configured DoH endpoint; never touch the system resolver.
     DohOnly,
+    /// Use DNS-over-TLS with the server named in `dot_server`.
+    DotOnly,
     /// Try the system resolver first (bounded by `dns_system_timeout_ms`);
     /// fall back to DoH on timeout or error.  **Default.**
     #[default]
@@ -176,12 +178,28 @@ pub struct AppConfig {
     /// corporate LANs.  Default: 300 ms.
     #[serde(default = "default_dns_system_timeout_ms")]
     pub dns_system_timeout_ms: u64,
+
+    // ── DNS-over-TLS server ───────────────────────────────────────────────
+    /// Resolver used when `dns_mode` is `DotOnly`.
+    /// Accepted values: `"cloudflare"`, `"google"`, `"quad9"`.
+    #[serde(default = "default_dot_server")]
+    pub dot_server: String,
+
+    // ── GeoIP (MaxMind GeoLite2) ──────────────────────────────────────────
+    /// MaxMind Account ID (numeric) used for Basic Auth on GeoLite2 downloads.
+    #[serde(default)]
+    pub maxmind_account_id: Option<String>,
+    /// MaxMind license key used to download the GeoLite2-City database.
+    /// When `None`, offline geolocation is disabled.
+    #[serde(default)]
+    pub maxmind_license_key: Option<String>,
 }
 
 fn default_global_timeout_ms()    -> u64 { 5_000 }
 fn default_cache_ttl_secs()       -> u64 { 3_600 }
 fn default_doh_endpoint()         -> String { "https://cloudflare-dns.com/dns-query".to_string() }
 fn default_dns_system_timeout_ms() -> u64 { 300 }
+fn default_dot_server()           -> String { "cloudflare".to_string() }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -211,6 +229,9 @@ impl Default for AppConfig {
             dns_mode: DnsMode::Automatic,
             doh_endpoint: default_doh_endpoint(),
             dns_system_timeout_ms: default_dns_system_timeout_ms(),
+            dot_server: default_dot_server(),
+            maxmind_account_id: None,
+            maxmind_license_key: None,
         }
     }
 }

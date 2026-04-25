@@ -1,19 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { theme } from '$lib/stores/app';
   import { i18n } from '$lib/services/i18n.svelte';
   import { historyStore } from '$lib/stores/history.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Toast from '$lib/components/Toast.svelte';
   import AboutModal from '$lib/components/AboutModal.svelte';
+  import FirstLaunchModal from '$lib/components/FirstLaunchModal.svelte';
 
   let { children } = $props();
 
-  onMount(() => {
+  let showFirstLaunch = $state(false);
+
+  onMount(async () => {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     theme.init(prefersDark ? 'dark' : 'light');
     i18n.init();
     historyStore.init();
+    const cfg = await invoke<{ first_launch?: boolean }>('get_config').catch(() => ({ first_launch: false as boolean | undefined }));
+    if (cfg.first_launch) showFirstLaunch = true;
   });
 </script>
 
@@ -28,6 +34,9 @@
   </div>
   <Toast />
   <AboutModal />
+  {#if showFirstLaunch}
+    <FirstLaunchModal onclose={() => (showFirstLaunch = false)} />
+  {/if}
 </div>
 
 <style>

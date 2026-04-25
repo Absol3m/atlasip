@@ -2,19 +2,43 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
+// BGP types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BgpPeer {
+    pub asn: u32,
+    pub name: Option<String>,
+    pub country: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BgpInfo {
+    pub asn: Option<u32>,
+    pub as_name: Option<String>,
+    pub as_country: Option<String>,
+    pub prefixes_v4: Vec<String>,
+    pub prefixes_v6: Vec<String>,
+    pub peers: Vec<BgpPeer>,
+}
+
+// ---------------------------------------------------------------------------
 // DNS record type
 // ---------------------------------------------------------------------------
 
-/// A single DNS resource record (A, AAAA, CNAME, TXT, PTR…) with TTL.
+/// A single DNS resource record (A, AAAA, CNAME, TXT, MX, NS, SOA…) with TTL.
 /// Returned by the DNS lookup step and embedded in [`IpRecord`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsRecord {
-    /// Record type as a string (e.g. "A", "AAAA", "CNAME", "TXT").
+    /// Record type as a string (e.g. "A", "AAAA", "CNAME", "TXT", "MX", "NS", "SOA").
     pub record_type: String,
     /// Human-readable record value (IP, hostname, or text content).
     pub value: String,
     /// Time-to-live in seconds as returned by the authoritative server.
     pub ttl: u32,
+    /// Whether this record was DNSSEC-validated (AD bit set in the resolving response).
+    #[serde(default)]
+    pub dnssec_validated: bool,
 }
 
 /// Ordered column names as shown in the UI table (spec §2.2).
@@ -71,6 +95,10 @@ pub struct IpRecord {
     pub abuse_contact: Option<String>,
     pub raw_whois: Option<String>,
     pub raw_rdap: Option<serde_json::Value>,
+    // ── GeoIP (MaxMind GeoLite2) ──────────────────────────────────────────────
+    pub geo_lat:  Option<f64>,
+    pub geo_lon:  Option<f64>,
+    pub geo_city: Option<String>,
     /// DNS records (A, AAAA, CNAME, TXT) with TTL, populated for hostname
     /// targets. Not included in table columns — JSON/export only.
     pub dns_records: Vec<DnsRecord>,
@@ -90,6 +118,9 @@ pub struct IpRecord {
     pub owner_enriched: bool,
     pub remarks_enriched: bool,
     pub dates_enriched: bool,
+    /// BGP/ASN enrichment from BGPView (no account or API key required).
+    #[serde(default)]
+    pub bgp: Option<BgpInfo>,
 }
 
 impl IpRecord {
@@ -120,6 +151,9 @@ impl IpRecord {
             abuse_contact: None,
             raw_whois: None,
             raw_rdap: None,
+            geo_lat:  None,
+            geo_lon:  None,
+            geo_city: None,
             dns_records: Vec::new(),
             lookup_errors: Vec::new(),
             remarks: None,
@@ -131,6 +165,7 @@ impl IpRecord {
             owner_enriched: false,
             remarks_enriched: false,
             dates_enriched: false,
+            bgp: None,
         }
     }
 

@@ -31,6 +31,18 @@ fn translate(key: String) -> String {
     atlasip::i18n::t(&key)
 }
 
+#[tauri::command]
+fn geoip_db_status() -> String {
+    atlasip::geoip::db_status().to_string()
+}
+
+#[tauri::command]
+async fn download_geoip(account_id: String, license_key: String) -> Result<(), String> {
+    atlasip::geoip::download(&account_id, &license_key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -57,6 +69,27 @@ pub fn run() {
             .block_on(atlasip::start_server());
     });
 
+    // Background GeoIP refresh: check on startup and every 24 h.
+    let cfg = config::load_config();
+    let geoip_account = cfg.maxmind_account_id.unwrap_or_default();
+    let geoip_key     = cfg.maxmind_license_key.unwrap_or_default();
+    if !geoip_account.is_empty() && !geoip_key.is_empty() {
+        std::thread::spawn(move || {
+            tokio::runtime::Runtime::new()
+                .expect("AtlasIP: failed to create geoip runtime")
+                .block_on(async move {
+                    loop {
+                        if atlasip::geoip::needs_update() {
+                            if let Err(e) = atlasip::geoip::download(&geoip_account, &geoip_key).await {
+                                tracing::warn!("GeoIP auto-refresh failed: {e}");
+                            }
+                        }
+                        tokio::time::sleep(tokio::time::Duration::from_secs(24 * 3_600)).await;
+                    }
+                });
+        });
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
@@ -74,7 +107,7 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_config, set_config, translate])
+        .invoke_handler(tauri::generate_handler![get_config, set_config, translate, geoip_db_status, download_geoip])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

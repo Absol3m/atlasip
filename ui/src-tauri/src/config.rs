@@ -104,10 +104,20 @@ pub struct AppConfig {
     pub theme: String,
     #[serde(default)]
     pub autostart: bool,
+    #[serde(default = "default_dns_transport")]
+    pub dns_transport: String,
+    #[serde(default)]
+    pub maxmind_account_id: Option<String>,
+    #[serde(default)]
+    pub maxmind_license_key: Option<String>,
+    #[serde(default = "default_first_launch")]
+    pub first_launch: bool,
 }
 
-fn default_locale() -> String { "en-US".into() }
-fn default_theme()  -> String { "system".into() }
+fn default_locale()         -> String { "en-US".into() }
+fn default_theme()          -> String { "system".into() }
+fn default_first_launch()   -> bool   { true }
+fn default_dns_transport()  -> String { "auto".into() }
 
 // ── File path ─────────────────────────────────────────────────────────────────
 
@@ -216,8 +226,13 @@ mod tests {
                 count:    5,
                 delay_ms: 500,
             },
-            locale: "fr".into(),
-            theme:  "dark".into(),
+            locale:               "fr".into(),
+            theme:                "dark".into(),
+            autostart:            false,
+            dns_transport:        "auto".into(),
+            maxmind_account_id:   None,
+            maxmind_license_key:  None,
+            first_launch:         false,
         }
     }
 

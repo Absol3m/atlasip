@@ -1,3 +1,3 @@
 pub mod client;
 
-pub use client::{ParsedRdap, RdapClient, RdapResult};
+pub use client::{ParsedRdap, RdapClient};

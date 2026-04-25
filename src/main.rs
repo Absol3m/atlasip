@@ -1,8 +1,10 @@
+mod bgp;
 mod cache;
 mod cli;
 mod config;
 mod dns;
 mod export;
+mod geoip;
 mod http;
 mod i18n;
 mod metrics;

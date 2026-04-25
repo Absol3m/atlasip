@@ -42,9 +42,13 @@
       count:    number;
       delay_ms: number;
     };
-    locale:     string;
-    theme:      string;
-    autostart:  boolean;
+    locale:               string;
+    theme:                string;
+    autostart:            boolean;
+    dns_transport:        string;
+    maxmind_account_id:   string | null;
+    maxmind_license_key:  string | null;
+    first_launch:         boolean;
   }
 
   // ── Locale ────────────────────────────────────────────────────────────────
@@ -54,8 +58,14 @@
     'fr-FR': 'Français',
   };
 
-  let localeSetting = $state<LocaleSetting>('en-US');
-  let autostart     = $state(false);
+  let localeSetting        = $state<LocaleSetting>('en-US');
+  let autostart            = $state(false);
+  let dnsTransport         = $state('auto');
+  let maxmindAccountId     = $state('');
+  let maxmindKey           = $state('');
+  let maxmindStatus        = $state<'missing' | 'ok' | 'outdated'>('missing');
+  let maxmindDownloading   = $state(false);
+  let maxmindError         = $state('');
 
   function onLocaleChange(e: Event) {
     localeSetting = (e.target as HTMLSelectElement).value as LocaleSetting;
@@ -220,9 +230,13 @@
         count:    retry.count,
         delay_ms: retry.delay,
       },
-      locale:    localeSetting,
-      theme:     themeSetting,
-      autostart: autostart,
+      locale:              localeSetting,
+      theme:               themeSetting,
+      autostart:            autostart,
+      dns_transport:        dnsTransport,
+      maxmind_account_id:   maxmindAccountId || null,
+      maxmind_license_key:  maxmindKey || null,
+      first_launch:         false,
     };
   }
 
@@ -256,7 +270,10 @@
       themeSetting = cfg.theme as ThemeSetting;
       applyThemeSetting(cfg.theme as ThemeSetting);
     }
-    autostart = cfg.autostart ?? false;
+    autostart        = cfg.autostart ?? false;
+    dnsTransport     = cfg.dns_transport ?? 'auto';
+    maxmindAccountId = cfg.maxmind_account_id ?? '';
+    maxmindKey       = cfg.maxmind_license_key ?? '';
   }
 
   // Guard: do not save while the initial load is being applied.
@@ -282,6 +299,24 @@
     scheduleSync();
   });
 
+  async function refreshGeoIpStatus() {
+    maxmindStatus = await invoke<'missing' | 'ok' | 'outdated'>('geoip_db_status');
+  }
+
+  async function downloadGeoIp() {
+    if (!maxmindAccountId.trim() || !maxmindKey.trim()) return;
+    maxmindDownloading = true;
+    maxmindError = '';
+    try {
+      await invoke('download_geoip', { accountId: maxmindAccountId.trim(), licenseKey: maxmindKey.trim() });
+      await refreshGeoIpStatus();
+    } catch (e) {
+      maxmindError = e instanceof Error ? e.message : String(e);
+    } finally {
+      maxmindDownloading = false;
+    }
+  }
+
   onMount(async () => {
     try {
       const cfg = await invoke<AppConfig>('get_config');
@@ -289,6 +324,7 @@
     } catch (e) {
       console.error('[settings] get_config failed:', e);
     }
+    await refreshGeoIpStatus();
     // Wait for Svelte to flush effects triggered by applyConfig before
     // enabling saves, so the initial load does not write back to disk.
     await tick();
@@ -317,6 +353,19 @@
               <option value="quad9">{i18n.t('settings.opt.dns.quad9')}</option>
             </select>
             <p class="field-hint">{i18n.t('settings.hint.dns_resolver')}</p>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" for="dns-transport">{i18n.t('settings.field.dns_transport')}</label>
+          <div class="input-wrap">
+            <select id="dns-transport" class="field-select" bind:value={dnsTransport}>
+              <option value="auto">{i18n.t('settings.opt.dns_transport.auto')}</option>
+              <option value="system">{i18n.t('settings.opt.dns_transport.system')}</option>
+              <option value="doh">{i18n.t('settings.opt.dns_transport.doh')}</option>
+              <option value="dot">{i18n.t('settings.opt.dns_transport.dot')}</option>
+            </select>
+            <p class="field-hint">{i18n.t('settings.hint.dns_transport')}</p>
           </div>
         </div>
 
@@ -556,6 +605,70 @@
     </section>
 
     <section class="section">
+      <h2 class="section-title">{i18n.t('settings.section.apikeys')}</h2>
+      <div class="section-body proxy-body">
+
+        <div class="field-row">
+          <label class="field-label" for="maxmind-account">{i18n.t('settings.field.maxmind_account_id')}</label>
+          <div class="input-wrap">
+            <input
+              id="maxmind-account"
+              class="field-input"
+              type="text"
+              placeholder={i18n.t('settings.maxmind.account_placeholder')}
+              bind:value={maxmindAccountId}
+            />
+            <p class="field-hint">{i18n.t('settings.hint.maxmind_account_id')}</p>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" for="maxmind-key">{i18n.t('settings.field.maxmind_key')}</label>
+          <div class="input-wrap">
+            <input
+              id="maxmind-key"
+              class="field-input"
+              type="password"
+              placeholder={i18n.t('settings.maxmind.placeholder')}
+              bind:value={maxmindKey}
+            />
+            <p class="field-hint">
+              {i18n.t('settings.hint.maxmind_key')}
+              <!-- svelte-ignore a11y_invalid_attribute -->
+              <a href="#" onclick={(e) => { e.preventDefault(); import('@tauri-apps/plugin-opener').then(m => m.openUrl('https://www.maxmind.com/en/geolite2/signup')); }} class="hint-link">
+                {i18n.t('settings.maxmind.get_key')}
+              </a>
+            </p>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <span class="field-label">{i18n.t('settings.field.maxmind_status')}</span>
+          <div class="input-wrap geoip-status-wrap">
+            <span class="geoip-status geoip-status--{maxmindStatus}">
+              {i18n.t(`settings.maxmind.status.${maxmindStatus}`)}
+            </span>
+            {#if maxmindStatus !== 'ok'}
+              <button
+                class="btn-download"
+                onclick={downloadGeoIp}
+                disabled={maxmindDownloading || !maxmindAccountId.trim() || !maxmindKey.trim()}
+              >
+                {maxmindDownloading
+                  ? i18n.t('settings.maxmind.downloading')
+                  : i18n.t('settings.maxmind.download')}
+              </button>
+            {/if}
+            {#if maxmindError}
+              <p class="field-error">{maxmindError}</p>
+            {/if}
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section class="section">
       <h2 class="section-title">{i18n.t('settings.section.retry')}</h2>
       <div class="section-body proxy-body">
 
@@ -760,5 +873,42 @@
     margin-left: 166px;
     margin-top: -8px;
   }
+
+  .hint-link {
+    color: var(--color-accent);
+    text-decoration: none;
+  }
+  .hint-link:hover { text-decoration: underline; }
+
+  .geoip-status-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .geoip-status {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+  }
+  .geoip-status--ok       { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
+  .geoip-status--missing  { background: color-mix(in srgb, var(--color-text-muted) 15%, transparent); color: var(--color-text-muted); }
+  .geoip-status--outdated { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning-text); }
+
+  .btn-download {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background-color var(--transition-fast);
+  }
+  .btn-download:hover:not(:disabled) { background: var(--color-hover); }
+  .btn-download:disabled { opacity: 0.45; cursor: not-allowed; }
 
 </style>
