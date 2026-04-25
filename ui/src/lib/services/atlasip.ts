@@ -8,9 +8,13 @@ async function request<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function getHealth(): Promise<string> {
-  const data = await request<{ status: string }>("/health");
-  return data.status;
+export interface HealthStatus {
+  status: string;
+  geoip_db: 'ok' | 'outdated' | 'missing';
+}
+
+export async function getHealth(): Promise<HealthStatus> {
+  return request<HealthStatus>("/health");
 }
 
 export interface ReverseIpDomain {

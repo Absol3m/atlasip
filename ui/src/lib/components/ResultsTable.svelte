@@ -10,6 +10,7 @@
   import { fade, fly } from 'svelte/transition';
   import { resultsStore } from '$lib/stores/results.svelte';
   import { ALL_COLUMNS } from '$lib/types/ip';
+  import { i18n } from '$lib/services/i18n.svelte';
   import type { IpRecord, ColumnDef, SortState } from '$lib/types/ip';
   import ResultRow from './ResultRow.svelte';
 
@@ -105,7 +106,7 @@
   const CELL_PAD    = 24; // 12 + 12 padding
 
   function computeAutoWidth(col: ColumnDef, rows: IpRecord[]): number {
-    const headerW = measureText(col.label.toUpperCase(), HEADER_FONT) + HEADER_PAD;
+    const headerW = measureText(i18n.t(`table.col.${col.key}`).toUpperCase(), HEADER_FONT) + HEADER_PAD;
     let maxW = headerW;
     for (const row of rows) {
       const w = measureText(col.getValue(row), CELL_FONT) + CELL_PAD;
@@ -439,7 +440,7 @@
               title="Click: sort · Shift+click: multi-sort · Drag: reorder"
             >
               <span class="th-content">
-                <span class="th-label">{col.label}</span>
+                <span class="th-label">{i18n.t(`table.col.${col.key}`)}</span>
                 {#if sortState}
                   <span class="sort-indicator">
                     {#if sortState.dir === 'asc'}
@@ -459,7 +460,7 @@
               <button
                 class="resize-handle"
                 type="button"
-                aria-label="Resize column {col.label}"
+                aria-label="Resize column {i18n.t(`table.col.${col.key}`)}"
                 title="Drag: resize · Double-click: auto-size"
                 onmousedown={(e) => startResize(e, col.key)}
                 ondblclick={(e) => { e.stopPropagation(); autoSizeColumn(col.key); }}
@@ -558,7 +559,7 @@
       <button class="ctx-item ctx-muted" role="menuitem"
         onclick={() => { hideColumn(cm.colKey!); contextMenu = null; }}
       >
-        Hide "{visibleCols.find(c => c.key === cm.colKey)?.label ?? cm.colKey}"
+        Hide "{i18n.t(`table.col.${cm.colKey ?? ''}`) || cm.colKey}"
       </button>
     {/if}
   </div>
@@ -599,7 +600,7 @@
               }
             }}
           />
-          <span class="drawer-label">{col.label}</span>
+          <span class="drawer-label">{i18n.t(`table.col.${col.key}`)}</span>
         </label>
       {/each}
     </div>
