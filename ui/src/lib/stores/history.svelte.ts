@@ -8,9 +8,21 @@ export interface HistoryEntry {
   resultCount: number;
 }
 
+function isValidEntry(e: unknown): e is HistoryEntry {
+  return (
+    typeof e === 'object' && e !== null &&
+    typeof (e as HistoryEntry).id === 'string' &&
+    Array.isArray((e as HistoryEntry).targets) &&
+    typeof (e as HistoryEntry).timestamp === 'number' &&
+    typeof (e as HistoryEntry).resultCount === 'number'
+  );
+}
+
 function load(): HistoryEntry[] {
   try {
-    return JSON.parse(localStorage.getItem(LS_KEY) ?? '[]');
+    const raw = JSON.parse(localStorage.getItem(LS_KEY) ?? '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(isValidEntry);
   } catch {
     return [];
   }

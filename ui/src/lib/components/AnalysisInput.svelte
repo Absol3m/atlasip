@@ -33,7 +33,7 @@
   // ── Event handlers ────────────────────────────────────────────────────────
   function handleInput(e: Event) {
     const value = (e.target as HTMLTextAreaElement).value;
-    analysisStore.scheduleparse(value);
+    analysisStore.scheduleParse(value);
     autoResize();
   }
 

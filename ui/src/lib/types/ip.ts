@@ -90,4 +90,7 @@ export const ALL_COLUMNS: ColumnDef[] = [
   { key: 'abuse_contact',label: 'Abuse Contact', minWidth: 160, getValue: r => r.abuse_contact ?? '' },
 ];
 
-export const DEFAULT_VISIBLE_COLUMNS = ALL_COLUMNS.map(c => c.key);
+export const DEFAULT_VISIBLE_COLUMNS = [
+  'order', 'ip', 'country', 'owner_name', 'network_name',
+  'cidr', 'from_ip', 'to_ip', 'status', 'whois_source',
+];

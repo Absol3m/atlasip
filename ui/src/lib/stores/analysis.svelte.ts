@@ -35,7 +35,7 @@ class AnalysisStore {
   // ── Input & parsing ────────────────────────────────────────────────────────
 
   /** Update raw input and schedule a debounced parse (80 ms). */
-  scheduleparse(raw: string) {
+  scheduleParse(raw: string) {
     this.rawInput = raw;
     if (this._parseTimer !== null) clearTimeout(this._parseTimer);
     this._parseTimer = setTimeout(() => {
