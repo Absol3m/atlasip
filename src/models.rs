@@ -270,4 +270,7 @@ pub struct ConfigUpdateRequest {
     pub rdap_timeout_ms: Option<u64>,
     pub default_export_format: Option<String>,
     pub csv_with_header: Option<bool>,
+    // ── GeoIP credentials ─────────────────────────────────────────────────
+    pub maxmind_account_id: Option<String>,
+    pub maxmind_license_key: Option<String>,
 }

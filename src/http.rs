@@ -369,7 +369,7 @@ async fn perform_lookup_inner(
         }
     }
 
-    // ── Step 4: BGP (BGPView, non-blocking) ─────────────────────────────────
+    // ── Step 4: BGP (RIPEstat, non-blocking) ────────────────────────────────
     match bgp_result {
         Ok(bgp) => {
             record.bgp = Some(bgp);
@@ -646,6 +646,8 @@ async fn update_config(
     if let Some(v) = body.rdap_timeout_ms       { config.rdap_timeout_ms       = v; }
     if let Some(v) = body.default_export_format { config.default_export_format = v; }
     if let Some(v) = body.csv_with_header       { config.csv_with_header       = v; }
+    if let Some(v) = body.maxmind_account_id    { config.maxmind_account_id    = Some(v); }
+    if let Some(v) = body.maxmind_license_key   { config.maxmind_license_key   = Some(v); }
 
     Ok(Json(config.clone()))
 }
