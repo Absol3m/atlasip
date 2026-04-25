@@ -376,9 +376,10 @@ async fn perform_lookup_inner(
 
     // ── Step 5: GeoIP (MaxMind GeoLite2, non-blocking) ──────────────────────
     if let Some(geo) = crate::geoip::lookup(&ip) {
-        record.geo_lat  = Some(geo.lat);
-        record.geo_lon  = Some(geo.lon);
-        record.geo_city = geo.city;
+        record.geo_lat     = Some(geo.lat);
+        record.geo_lon     = Some(geo.lon);
+        record.geo_city    = geo.city;
+        record.geo_country = geo.country;
     }
 
     // ── Cache insert (P0-PERF-004) ───────────────────────────────────────────

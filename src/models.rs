@@ -96,9 +96,10 @@ pub struct IpRecord {
     pub raw_whois: Option<String>,
     pub raw_rdap: Option<serde_json::Value>,
     // ── GeoIP (MaxMind GeoLite2) ──────────────────────────────────────────────
-    pub geo_lat:  Option<f64>,
-    pub geo_lon:  Option<f64>,
-    pub geo_city: Option<String>,
+    pub geo_lat:     Option<f64>,
+    pub geo_lon:     Option<f64>,
+    pub geo_city:    Option<String>,
+    pub geo_country: Option<String>,
     /// DNS records (A, AAAA, CNAME, TXT) with TTL, populated for hostname
     /// targets. Not included in table columns — JSON/export only.
     pub dns_records: Vec<DnsRecord>,
@@ -151,9 +152,10 @@ impl IpRecord {
             abuse_contact: None,
             raw_whois: None,
             raw_rdap: None,
-            geo_lat:  None,
-            geo_lon:  None,
-            geo_city: None,
+            geo_lat:     None,
+            geo_lon:     None,
+            geo_city:    None,
+            geo_country: None,
             dns_records: Vec::new(),
             lookup_errors: Vec::new(),
             remarks: None,

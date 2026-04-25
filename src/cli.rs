@@ -219,6 +219,7 @@ async fn cmd_lookup(
         }
     }
 
+    crate::geoip::init_reader();
     info!("Looking up: {target}");
     let cache   = crate::cache::LookupCache::new(std::time::Duration::from_secs(config.cache_ttl_secs));
     let metrics = crate::metrics::RequestMetrics::new();

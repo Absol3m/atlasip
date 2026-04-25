@@ -40,6 +40,7 @@ pub async fn start_server() {
     // Safety: never expose the API beyond localhost.
     let addr = sanitize_listen_addr(&cfg.listen_addr);
 
+    geoip::init_reader();
     let state  = http::AppState::with_config(cfg);
     let router = http::build_router(state);
 
@@ -60,6 +61,7 @@ pub async fn start_server() {
 /// and wants to avoid reading the file twice.
 pub async fn start_server_with_config(cfg: config::AppConfig) {
     let addr   = sanitize_listen_addr(&cfg.listen_addr);
+    geoip::init_reader();
     let state  = http::AppState::with_config(cfg);
     let router = http::build_router(state);
 

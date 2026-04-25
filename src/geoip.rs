@@ -3,10 +3,39 @@ use std::{
     io,
     net::IpAddr,
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::{Duration, SystemTime},
 };
 
 use anyhow::{Context, Result};
+
+// ---------------------------------------------------------------------------
+// Cached reader — opened once at startup, reused for every lookup
+// ---------------------------------------------------------------------------
+
+type GeoReader = maxminddb::Reader<Vec<u8>>;
+static READER: OnceLock<GeoReader> = OnceLock::new();
+
+/// Open the GeoLite2-City database and cache it for the lifetime of the process.
+/// Must be called after the database file is known to exist (e.g. at server
+/// startup or just after a successful `download`).  Silently no-ops if the
+/// database file is missing or already initialised.
+pub fn init_reader() {
+    if READER.get().is_some() {
+        return;
+    }
+    let path = db_path();
+    if !path.exists() {
+        return;
+    }
+    match maxminddb::Reader::open_readfile(&path) {
+        Ok(reader) => {
+            let _ = READER.set(reader);
+            tracing::info!("GeoIP: database loaded from {}", path.display());
+        }
+        Err(e) => tracing::warn!("GeoIP: failed to load database: {e}"),
+    }
+}
 
 const DB_FILENAME: &str = "GeoLite2-City.mmdb";
 const MAX_AGE_SECS: u64 = 24 * 3_600;
@@ -128,13 +157,8 @@ pub struct GeoRecord {
 }
 
 pub fn lookup(ip_str: &str) -> Option<GeoRecord> {
-    let path = db_path();
-    if !path.exists() {
-        return None;
-    }
-
+    let reader = READER.get()?;
     let ip: IpAddr = ip_str.parse().ok()?;
-    let reader = maxminddb::Reader::open_readfile(&path).ok()?;
     let city: maxminddb::geoip2::City = reader.lookup(ip).ok()?.decode().ok()??;
 
     let lat = city.location.latitude?;

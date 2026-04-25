@@ -300,8 +300,14 @@ pub async fn full_dns_lookup(
             _                => build_resolver(timeout_ms),
         };
 
-        // DNSSEC check runs concurrently with record queries.
-        let dnssec_fut = dnssec_check_doh(hostname, doh_endpoint, timeout_ms);
+        // DNSSEC check via DoH — skipped in DotOnly mode to avoid a stealth
+        // DoH request when the user has explicitly chosen a DoT-only transport.
+        let dnssec_fut = async {
+            match dns_mode {
+                DnsMode::DotOnly => false,
+                _ => dnssec_check_doh(hostname, doh_endpoint, timeout_ms).await,
+            }
+        };
 
         let (
             a_recs, aaaa_recs, cname_recs, txt_recs,
@@ -338,8 +344,10 @@ pub async fn full_dns_lookup(
             .map(|r| r.value.clone());
 
         let ptr = match &resolved_ip {
-            Some(ip) => reverse_lookup(ip, timeout_ms).await.ok().flatten(),
-            None     => None,
+            Some(ip) => reverse_lookup_smart(
+                ip, dns_mode, timeout_ms, doh_endpoint, dot_server, timeout_ms,
+            ).await.ok().flatten(),
+            None => None,
         };
 
         (records, resolved_ip, ptr)
