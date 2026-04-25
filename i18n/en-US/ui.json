@@ -274,5 +274,6 @@
   "history.relative.now": "just now",
   "history.relative.minutes": "{n} min ago",
   "history.relative.hours": "{n}h ago",
-  "history.relative.days": "{n}d ago"
+  "history.relative.days": "{n}d ago",
+  "history.last": "last"
 }

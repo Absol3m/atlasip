@@ -274,5 +274,6 @@
   "history.relative.now": "à l'instant",
   "history.relative.minutes": "il y a {n} min",
   "history.relative.hours": "il y a {n}h",
-  "history.relative.days": "il y a {n}j"
+  "history.relative.days": "il y a {n}j",
+  "history.last": "dernière"
 }
