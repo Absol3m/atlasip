@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { Clock, Search, Trash2, X, ChevronDown, ChevronUp } from 'lucide-svelte';
+  import { Clock, Trash2, X, ChevronDown, ChevronUp } from 'lucide-svelte';
   import { historyStore } from '$lib/stores/history.svelte';
   import { analysisStore } from '$lib/stores/analysis.svelte';
   import { i18n } from '$lib/services/i18n.svelte';
@@ -115,8 +115,11 @@
 
         <div class="group-card" class:is-expanded={isExpanded}>
 
-          <!-- ── Card header ── -->
-          <div class="group-header">
+          <!-- ── Card header — click to rerun ── -->
+          <div class="group-header" role="button" tabindex="0"
+            onclick={() => rerun(group.targets)}
+            onkeydown={(e) => e.key === 'Enter' && rerun(group.targets)}
+          >
             <div class="group-left">
               <div class="group-targets">
                 {#each group.targets.slice(0, 5) as t}
@@ -146,19 +149,14 @@
               {#if hasMany}
                 <span class="count-badge">{group.consultations.length}×</span>
               {/if}
-              <button class="rerun-btn" title={i18n.t('history.rerun.title')}
-                onclick={() => rerun(group.targets)}
-              >
-                <Search size={13} /> {i18n.t('history.rerun')}
-              </button>
               <button class="del-btn" title={i18n.t('history.delete.group')}
-                onclick={() => historyStore.removeMany(group.consultations.map(c => c.id))}
+                onclick={(e) => { e.stopPropagation(); historyStore.removeMany(group.consultations.map(c => c.id)); }}
               >
                 <X size={13} />
               </button>
               {#if hasMany}
                 <button class="chevron-btn" aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                  onclick={() => toggleGroup(group.key)}
+                  onclick={(e) => { e.stopPropagation(); toggleGroup(group.key); }}
                 >
                   {#if isExpanded}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}
                 </button>
@@ -293,6 +291,8 @@
     justify-content: space-between;
     gap: 12px;
     padding: 11px 14px;
+    cursor: pointer;
+    user-select: none;
   }
 
   .group-left {
@@ -351,27 +351,6 @@
     border-radius: var(--radius-full);
     font-family: var(--font-mono);
     letter-spacing: 0;
-  }
-
-  .rerun-btn {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 5px 10px;
-    border: 1px solid var(--color-border);
-    border-radius: 5px;
-    background: none;
-    font-size: 12px;
-    color: var(--color-text-muted);
-    cursor: pointer;
-    transition: background-color 0.15s, color 0.15s;
-    white-space: nowrap;
-  }
-
-  .rerun-btn:hover {
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-    color: var(--color-accent);
-    border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
   }
 
   .del-btn, .chevron-btn {
