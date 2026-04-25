@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::models::{BgpInfo, BgpPeer};
+use crate::{config::ProxyConfig, models::{BgpInfo, BgpPeer}};
 
 // ---------------------------------------------------------------------------
 // Client  (data source: RIPEstat — https://stat.ripe.net/docs/data_api)
@@ -13,12 +13,17 @@ pub struct BgpClient {
 }
 
 impl BgpClient {
-    pub fn new(timeout_ms: u64) -> Result<Self> {
-        let client = reqwest::Client::builder()
+    pub fn new(timeout_ms: u64, proxy: &ProxyConfig) -> Result<Self> {
+        let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_millis(timeout_ms))
-            .user_agent("AtlasIP/0.7 (OSINT; https://github.com/Absol3m/atlasip)")
-            .build()?;
-        Ok(Self { client })
+            .user_agent("AtlasIP/0.7 (OSINT; https://github.com/Absol3m/atlasip)");
+
+        if let Some(url) = &proxy.http   { builder = builder.proxy(reqwest::Proxy::http(url)?);  }
+        if let Some(url) = &proxy.https  { builder = builder.proxy(reqwest::Proxy::https(url)?); }
+        if let Some(url) = &proxy.socks4 { builder = builder.proxy(reqwest::Proxy::all(url)?);   }
+        if let Some(url) = &proxy.socks5 { builder = builder.proxy(reqwest::Proxy::all(url)?);   }
+
+        Ok(Self { client: builder.build()? })
     }
 
     /// Full BGP enrichment for `ip`: resolves ASN via prefix-overview, then
@@ -424,7 +429,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network access to stat.ripe.net"]
     async fn test_bgp_lookup_google_dns() {
-        let client = BgpClient::new(5_000).expect("client init should not fail");
+        let client = BgpClient::new(5_000, &ProxyConfig::default()).expect("client init should not fail");
         let result = client.lookup("8.8.8.8").await;
 
         assert!(result.is_ok(), "RIPEstat lookup failed: {:?}", result.err());
@@ -447,7 +452,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network access to stat.ripe.net"]
     async fn test_bgp_lookup_cloudflare() {
-        let client = BgpClient::new(5_000).expect("client init should not fail");
+        let client = BgpClient::new(5_000, &ProxyConfig::default()).expect("client init should not fail");
         let info = client.lookup("1.1.1.1").await.expect("RIPEstat lookup failed");
 
         assert_eq!(info.asn, Some(13335), "1.1.1.1 must be AS13335 (Cloudflare)");

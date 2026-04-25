@@ -32,6 +32,10 @@ use crate::{
     whois::{enrich_from_whois_raw, ParsedWhois, WhoisClient},
 };
 
+/// Maximum number of lookup results kept in the session store.
+/// Oldest entries are dropped first when the limit is exceeded.
+const MAX_SESSION_RECORDS: usize = 10_000;
+
 // ---------------------------------------------------------------------------
 // Shared application state
 // ---------------------------------------------------------------------------
@@ -312,10 +316,11 @@ async fn perform_lookup_inner(
     let bgp_future = {
         let ip_clone = ip.clone();
         // Cap at 1 500 ms per request so 2 sequential rounds (ip → prefixes+peers)
-        // stay within the 5 s global timeout even on a slow BGPView response.
-        let timeout  = config.rdap_timeout_ms.min(1_500);
+        // stay within the 5 s global timeout even on a slow RIPEstat response.
+        let timeout = config.rdap_timeout_ms.min(1_500);
+        let proxy   = config.proxy.clone();
         async move {
-            let client = BgpClient::new(timeout)?;
+            let client = BgpClient::new(timeout, &proxy)?;
             client.lookup(&ip_clone).await
         }
     };
@@ -475,7 +480,7 @@ async fn lookup_ip(
     let record = perform_lookup(order, &ip, &config, &state.cache, &state.metrics).await;
     drop(_permit);
 
-    state.records.write().await.push(record.clone());
+    push_record(&state.records, record.clone()).await;
     info!("Lookup complete for {ip}: {} errors", record.lookup_errors.len());
 
     Ok(Json(record).into_response())
@@ -515,7 +520,7 @@ async fn lookup_hostname(
     let record = perform_lookup(order, &host, &config, &state.cache, &state.metrics).await;
     drop(_permit);
 
-    state.records.write().await.push(record.clone());
+    push_record(&state.records, record.clone()).await;
     info!("Lookup complete for {host}: {} errors", record.lookup_errors.len());
 
     Ok(Json(record).into_response())
@@ -569,8 +574,14 @@ async fn lookup_bulk(
     // Restore deterministic output order.
     results.sort_by_key(|r| r.order);
 
-    let mut store = state.records.write().await;
-    store.extend(results.clone());
+    {
+        let mut store = state.records.write().await;
+        store.extend(results.clone());
+        let overflow = store.len().saturating_sub(MAX_SESSION_RECORDS);
+        if overflow > 0 {
+            store.drain(0..overflow);
+        }
+    }
     info!("Bulk lookup complete: {} records", results.len());
 
     Ok(Json(results).into_response())
@@ -749,17 +760,19 @@ async fn reverse_ip_domains(
             .into_response());
     }
 
-    let timeout_ms = {
+    let (timeout_ms, proxy) = {
         let cfg = state.config.read().await;
-        cfg.rdap_timeout_ms
+        (cfg.rdap_timeout_ms, cfg.proxy.clone())
     };
 
     let hostname = params.get("hostname").cloned();
 
-    let client: reqwest::Client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(timeout_ms))
-        .user_agent("AtlasIP/0.7 (OSINT; https://github.com/atlasip)")
-        .build()?;
+    let client: reqwest::Client = apply_proxy(
+        reqwest::Client::builder()
+            .timeout(Duration::from_millis(timeout_ms))
+            .user_agent("AtlasIP/0.7 (OSINT; https://github.com/Absol3m/atlasip)"),
+        &proxy,
+    )?.build()?;
 
     // ── Run all sources in parallel ──────────────────────────────────────────
     let (ht_result, crtsh_result) = tokio::join!(
@@ -866,6 +879,38 @@ async fn query_crtsh(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Push `record` into `store`, evicting the oldest entries when the session
+/// cap is reached.  Holds the write lock only for the duration of the push.
+async fn push_record(store: &Arc<RwLock<Vec<IpRecord>>>, record: IpRecord) {
+    let mut s = store.write().await;
+    s.push(record);
+    let overflow = s.len().saturating_sub(MAX_SESSION_RECORDS);
+    if overflow > 0 {
+        s.drain(0..overflow);
+    }
+}
+
+/// Apply `ProxyConfig` entries to a `reqwest::ClientBuilder`.
+/// Returns the builder unchanged when no proxy is configured.
+pub(crate) fn apply_proxy(
+    mut builder: reqwest::ClientBuilder,
+    proxy: &crate::config::ProxyConfig,
+) -> anyhow::Result<reqwest::ClientBuilder> {
+    if let Some(url) = &proxy.http {
+        builder = builder.proxy(reqwest::Proxy::http(url)?);
+    }
+    if let Some(url) = &proxy.https {
+        builder = builder.proxy(reqwest::Proxy::https(url)?);
+    }
+    if let Some(url) = &proxy.socks4 {
+        builder = builder.proxy(reqwest::Proxy::all(url)?);
+    }
+    if let Some(url) = &proxy.socks5 {
+        builder = builder.proxy(reqwest::Proxy::all(url)?);
+    }
+    Ok(builder)
+}
 
 /// Set `dest` to `src` only if `dest` is currently `None`.
 fn fill_opt(dest: &mut Option<String>, src: Option<String>) {
