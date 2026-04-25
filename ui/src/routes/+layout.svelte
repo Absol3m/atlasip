@@ -12,14 +12,24 @@
   let { children } = $props();
 
   let showFirstLaunch = $state(false);
+  let _layoutConfig: Record<string, unknown> | null = null;
+
+  async function handleFirstLaunchClose() {
+    showFirstLaunch = false;
+    if (_layoutConfig) {
+      await invoke('set_config', { config: { ..._layoutConfig, first_launch: false } })
+        .catch(console.error);
+    }
+  }
 
   onMount(async () => {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     theme.init(prefersDark ? 'dark' : 'light');
     i18n.init();
     historyStore.init();
-    const cfg = await invoke<{ first_launch?: boolean }>('get_config').catch(() => ({ first_launch: false as boolean | undefined }));
-    if (cfg.first_launch) showFirstLaunch = true;
+    _layoutConfig = await invoke<Record<string, unknown>>('get_config')
+      .catch(() => null);
+    if (_layoutConfig?.first_launch) showFirstLaunch = true;
   });
 </script>
 
@@ -35,7 +45,7 @@
   <Toast />
   <AboutModal />
   {#if showFirstLaunch}
-    <FirstLaunchModal onclose={() => (showFirstLaunch = false)} />
+    <FirstLaunchModal onclose={handleFirstLaunchClose} />
   {/if}
 </div>
 

@@ -1,6 +1,5 @@
 import type { IpRecord } from '$lib/types/ip';
-
-const BASE_URL = 'http://127.0.0.1:8080';
+import { BASE_URL } from '$lib/services/atlasip';
 
 export async function lookupIPs(ips: string[]): Promise<IpRecord[]> {
   const response = await fetch(`${BASE_URL}/lookup/bulk`, {

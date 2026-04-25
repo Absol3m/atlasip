@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { syncBackendConfig } from '$lib/services/atlasip';
   import HybridDurationInput from '$lib/components/HybridDurationInput.svelte';
   import Toggle from '$lib/components/Toggle.svelte';
   import { theme } from '$lib/stores/app';
@@ -288,7 +289,16 @@
     ) return;
     clearTimeout(syncTimer);
     syncTimer = setTimeout(() => {
-      invoke('set_config', { config: toConfig() }).catch(console.error);
+      const cfg = toConfig();
+      invoke('set_config', { config: cfg }).catch(console.error);
+      syncBackendConfig({
+        locale:              cfg.locale,
+        dns_timeout_ms:      cfg.timeouts.dns_ms,
+        rdap_timeout_ms:     cfg.timeouts.request_ms,
+        whois_timeout_ms:    cfg.timeouts.request_ms,
+        maxmind_account_id:  cfg.maxmind_account_id,
+        maxmind_license_key: cfg.maxmind_license_key,
+      });
     }, 300);
   }
 

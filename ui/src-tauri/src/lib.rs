@@ -40,7 +40,10 @@ fn geoip_db_status() -> String {
 async fn download_geoip(account_id: String, license_key: String) -> Result<(), String> {
     atlasip::geoip::download(&account_id, &license_key)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Activate the reader in the running server process without requiring a restart.
+    atlasip::geoip::init_reader();
+    Ok(())
 }
 
 // ── App entry point ───────────────────────────────────────────────────────────

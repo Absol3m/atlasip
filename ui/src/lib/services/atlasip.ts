@@ -1,4 +1,4 @@
-const BASE_URL = "http://127.0.0.1:8080";
+export const BASE_URL = "http://127.0.0.1:8080";
 
 async function request<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`);
@@ -28,6 +28,30 @@ export interface ReverseIpResult {
   results: ReverseIpDomain[];
   count: number;
   source_errors: ReverseIpSourceError[];
+}
+
+/** Fields from Tauri AppConfig that map directly to backend ConfigUpdateRequest. */
+export interface BackendConfigSync {
+  locale?:               string;
+  dns_timeout_ms?:       number;
+  rdap_timeout_ms?:      number;
+  whois_timeout_ms?:     number;
+  maxmind_account_id?:   string | null;
+  maxmind_license_key?:  string | null;
+}
+
+/**
+ * Push relevant Tauri config fields to the backend HTTP API.
+ * Fire-and-forget — errors are swallowed (backend may not be running).
+ */
+export async function syncBackendConfig(fields: BackendConfigSync): Promise<void> {
+  try {
+    await fetch(`${BASE_URL}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields),
+    });
+  } catch { /* backend not ready — ignore */ }
 }
 
 export async function reverseIpLookup(
