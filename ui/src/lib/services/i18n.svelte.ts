@@ -1,9 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import enUsUi      from '../../../../i18n/en-US/ui.json';
-import enUsErrors  from '../../../../i18n/en-US/errors.json';
-import frFrUi      from '../../../../i18n/fr-FR/ui.json';
-import frFrErrors  from '../../../../i18n/fr-FR/errors.json';
+import enUsUi      from '$i18n/en-US/ui.json';
+import enUsErrors  from '$i18n/en-US/errors.json';
+import frFrUi      from '$i18n/fr-FR/ui.json';
+import frFrErrors  from '$i18n/fr-FR/errors.json';
 
 type TranslationMap = Record<string, string>;
 

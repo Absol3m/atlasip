@@ -12,6 +12,9 @@ const config = {
     adapter: adapter({
       fallback: "index.html",
     }),
+    alias: {
+      '$i18n': '../i18n',
+    },
   },
 };
 
