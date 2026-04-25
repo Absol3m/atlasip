@@ -57,6 +57,12 @@ class HistoryStore {
     save(this.entries);
   }
 
+  removeMany(ids: string[]) {
+    const set = new Set(ids);
+    this.entries = this.entries.filter(e => !set.has(e.id));
+    save(this.entries);
+  }
+
   clear() {
     this.entries = [];
     save([]);

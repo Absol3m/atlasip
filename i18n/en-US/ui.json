@@ -265,5 +265,14 @@
   "table.col.host_name": "Hostname",
   "table.col.resolved_name": "Resolved",
   "table.col.postal_code": "Postal Code",
-  "table.col.abuse_contact": "Abuse Contact"
+  "table.col.abuse_contact": "Abuse Contact",
+  "history.targets.one": "{n} unique target",
+  "history.targets.many": "{n} unique targets",
+  "history.consultations.one": "{n} consultation",
+  "history.consultations.many": "{n} consultations",
+  "history.delete.group": "Delete all",
+  "history.relative.now": "just now",
+  "history.relative.minutes": "{n} min ago",
+  "history.relative.hours": "{n}h ago",
+  "history.relative.days": "{n}d ago"
 }

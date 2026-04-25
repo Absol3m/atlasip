@@ -265,5 +265,14 @@
   "table.col.host_name": "Nom d'hôte",
   "table.col.resolved_name": "Résolu en",
   "table.col.postal_code": "Code postal",
-  "table.col.abuse_contact": "Contact d'abus"
+  "table.col.abuse_contact": "Contact d'abus",
+  "history.targets.one": "{n} cible unique",
+  "history.targets.many": "{n} cibles uniques",
+  "history.consultations.one": "{n} consultation",
+  "history.consultations.many": "{n} consultations",
+  "history.delete.group": "Tout supprimer",
+  "history.relative.now": "à l'instant",
+  "history.relative.minutes": "il y a {n} min",
+  "history.relative.hours": "il y a {n}h",
+  "history.relative.days": "il y a {n}j"
 }
