@@ -396,9 +396,47 @@ async fn perform_lookup_inner(
     record
 }
 
-/// Merge parsed RDAP fields into an `IpRecord`.
-/// Fields already set on the record are left unchanged (first-wins).
-fn apply_rdap(rec: &mut IpRecord, p: ParsedRdap) {
+// Common field bundle shared by ParsedRdap and ParsedWhois (identical structs).
+struct ParsedFields {
+    country: Option<String>, owner_name: Option<String>, address: Option<String>,
+    emails: Vec<String>, abuse_emails: Vec<String>,
+    phone: Option<String>, fax: Option<String>,
+    from_ip: Option<String>, to_ip: Option<String>, status: Option<String>,
+    network_name: Option<String>, contact_name: Option<String>,
+    allocated: Option<String>, cidr: Option<String>,
+    postal_code: Option<String>, abuse_contact: Option<String>,
+}
+
+impl From<ParsedRdap> for ParsedFields {
+    fn from(p: ParsedRdap) -> Self {
+        Self {
+            country: p.country, owner_name: p.owner_name, address: p.address,
+            emails: p.emails, abuse_emails: p.abuse_emails,
+            phone: p.phone, fax: p.fax,
+            from_ip: p.from_ip, to_ip: p.to_ip, status: p.status,
+            network_name: p.network_name, contact_name: p.contact_name,
+            allocated: p.allocated, cidr: p.cidr,
+            postal_code: p.postal_code, abuse_contact: p.abuse_contact,
+        }
+    }
+}
+
+impl From<ParsedWhois> for ParsedFields {
+    fn from(p: ParsedWhois) -> Self {
+        Self {
+            country: p.country, owner_name: p.owner_name, address: p.address,
+            emails: p.emails, abuse_emails: p.abuse_emails,
+            phone: p.phone, fax: p.fax,
+            from_ip: p.from_ip, to_ip: p.to_ip, status: p.status,
+            network_name: p.network_name, contact_name: p.contact_name,
+            allocated: p.allocated, cidr: p.cidr,
+            postal_code: p.postal_code, abuse_contact: p.abuse_contact,
+        }
+    }
+}
+
+/// Merge parsed fields into an `IpRecord`.  Fields already set are left unchanged (first-wins).
+fn apply_parsed_fields(rec: &mut IpRecord, p: ParsedFields) {
     fill_opt(&mut rec.country,       p.country);
     fill_opt(&mut rec.owner_name,    p.owner_name);
     fill_opt(&mut rec.address,       p.address);
@@ -417,33 +455,19 @@ fn apply_rdap(rec: &mut IpRecord, p: ParsedRdap) {
     extend_unique(&mut rec.abuse_emails, p.abuse_emails);
 }
 
-/// Merge parsed WHOIS fields into an `IpRecord`.
-fn apply_whois(rec: &mut IpRecord, p: ParsedWhois) {
-    fill_opt(&mut rec.country,       p.country);
-    fill_opt(&mut rec.owner_name,    p.owner_name);
-    fill_opt(&mut rec.address,       p.address);
-    fill_opt(&mut rec.phone,         p.phone);
-    fill_opt(&mut rec.fax,           p.fax);
-    fill_opt(&mut rec.from_ip,       p.from_ip);
-    fill_opt(&mut rec.to_ip,         p.to_ip);
-    fill_opt(&mut rec.status,        p.status);
-    fill_opt(&mut rec.network_name,  p.network_name);
-    fill_opt(&mut rec.contact_name,  p.contact_name);
-    fill_opt(&mut rec.allocated,     p.allocated);
-    fill_opt(&mut rec.cidr,          p.cidr);
-    fill_opt(&mut rec.postal_code,   p.postal_code);
-    fill_opt(&mut rec.abuse_contact, p.abuse_contact);
-    extend_unique(&mut rec.emails,       p.emails);
-    extend_unique(&mut rec.abuse_emails, p.abuse_emails);
-}
+fn apply_rdap(rec: &mut IpRecord, p: ParsedRdap)   { apply_parsed_fields(rec, p.into()); }
+fn apply_whois(rec: &mut IpRecord, p: ParsedWhois)  { apply_parsed_fields(rec, p.into()); }
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// GET /health → `{ "status": "ok" }` (spec §2.6)
+/// GET /health → `{ "status": "ok", "geoip_db": "ok"|"outdated"|"missing" }` (spec §2.6)
 async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({ "status": "ok" }))
+    Json(serde_json::json!({
+        "status":   "ok",
+        "geoip_db": crate::geoip::db_status(),
+    }))
 }
 
 /// GET /lookup/ip/:ip → `IpRecord` (spec §2.6)
@@ -564,10 +588,19 @@ async fn lookup_bulk(
     }
 
     let mut results: Vec<IpRecord> = Vec::new();
+    let mut completed: u32 = 0;
     while let Some(res) = set.join_next().await {
         match res {
             Ok(record) => results.push(record),
             Err(e)     => error!("Bulk lookup task panicked: {e}"),
+        }
+        completed += 1;
+        if config.pause_every > 0
+            && config.pause_duration_ms > 0
+            && completed % config.pause_every == 0
+            && !set.is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(config.pause_duration_ms)).await;
         }
     }
 

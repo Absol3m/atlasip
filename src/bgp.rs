@@ -195,25 +195,6 @@ pub(crate) fn parse_holder(holder: Option<&str>) -> (Option<String>, Option<Stri
     (Some(base.to_owned()), as_country)
 }
 
-/// Split a flat slice of prefix JSON objects into (v4, v6) string vecs.
-pub(crate) fn split_prefixes(prefixes: Option<&[serde_json::Value]>) -> (Vec<String>, Vec<String>) {
-    let Some(arr) = prefixes else {
-        return (Vec::new(), Vec::new());
-    };
-    let mut v4 = Vec::new();
-    let mut v6 = Vec::new();
-    for p in arr {
-        if let Some(prefix) = p["prefix"].as_str() {
-            if prefix.contains(':') {
-                v6.push(prefix.to_owned());
-            } else {
-                v4.push(prefix.to_owned());
-            }
-        }
-    }
-    (v4, v6)
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -258,69 +239,6 @@ mod tests {
         let (name, country) = parse_holder(Some("TEST-AS - Test ISP, EUR"));
         assert_eq!(name.as_deref(), Some("TEST-AS"));
         assert_eq!(country.as_deref(), Some("EUR"));
-    }
-
-    // ── split_prefixes ───────────────────────────────────────────────────────
-
-    #[test]
-    fn test_split_prefixes_none_input() {
-        let (v4, v6) = split_prefixes(None);
-        assert!(v4.is_empty());
-        assert!(v6.is_empty());
-    }
-
-    #[test]
-    fn test_split_prefixes_empty_array() {
-        let arr: Vec<serde_json::Value> = vec![];
-        let (v4, v6) = split_prefixes(Some(&arr));
-        assert!(v4.is_empty());
-        assert!(v6.is_empty());
-    }
-
-    #[test]
-    fn test_split_prefixes_v4_only() {
-        let arr = vec![
-            json!({ "prefix": "8.8.8.0/24" }),
-            json!({ "prefix": "8.8.4.0/24" }),
-        ];
-        let (v4, v6) = split_prefixes(Some(&arr));
-        assert_eq!(v4, vec!["8.8.8.0/24", "8.8.4.0/24"]);
-        assert!(v6.is_empty());
-    }
-
-    #[test]
-    fn test_split_prefixes_v6_only() {
-        let arr = vec![
-            json!({ "prefix": "2001:4860::/32" }),
-            json!({ "prefix": "2404:6800::/32" }),
-        ];
-        let (v4, v6) = split_prefixes(Some(&arr));
-        assert!(v4.is_empty());
-        assert_eq!(v6, vec!["2001:4860::/32", "2404:6800::/32"]);
-    }
-
-    #[test]
-    fn test_split_prefixes_mixed() {
-        let arr = vec![
-            json!({ "prefix": "8.8.8.0/24" }),
-            json!({ "prefix": "2001:4860::/32" }),
-            json!({ "prefix": "1.2.3.0/24" }),
-        ];
-        let (v4, v6) = split_prefixes(Some(&arr));
-        assert_eq!(v4.len(), 2);
-        assert_eq!(v6.len(), 1);
-        assert!(v4.contains(&"8.8.8.0/24".to_owned()));
-        assert!(v6.contains(&"2001:4860::/32".to_owned()));
-    }
-
-    #[test]
-    fn test_split_prefixes_skips_missing_field() {
-        let arr = vec![
-            json!({ "ip": "8.8.8.0" }),
-            json!({ "prefix": "8.8.8.0/24" }),
-        ];
-        let (v4, _) = split_prefixes(Some(&arr));
-        assert_eq!(v4, vec!["8.8.8.0/24"]);
     }
 
     // ── BgpInfo / BgpPeer data model ─────────────────────────────────────────

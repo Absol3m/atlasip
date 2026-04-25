@@ -134,10 +134,6 @@ pub fn is_ip(s: &str) -> bool {
     s.parse::<IpAddr>().is_ok()
 }
 
-/// Return `true` if `s` looks like a hostname (not a bare IP address).
-pub fn is_hostname(s: &str) -> bool {
-    !is_ip(s)
-}
 
 #[cfg(test)]
 mod tests {
@@ -279,12 +275,6 @@ mod tests {
         assert!(is_ip("2001:4860:4860::8888"));
         assert!(!is_ip("example.com"));
         assert!(!is_ip("not-an-ip"));
-    }
-
-    #[test]
-    fn test_is_hostname() {
-        assert!(is_hostname("example.com"));
-        assert!(!is_hostname("8.8.8.8"));
     }
 
     // --- normalize_date ---
